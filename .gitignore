@@ -13,3 +13,7 @@ venv/
 /scratch/
 .DS_Store
 dist-electron/
+/packaging/build/
+/.build-venv/
+/desktop/test-results/
+/desktop/build-resources/.icon-ico/

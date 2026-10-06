@@ -46,7 +46,13 @@ function pythonCommand(): { cmd: string; args: string[] } {
 function startEngine(): Promise<EngineInfo> {
   return new Promise((resolve, reject) => {
     const { cmd, args } = pythonCommand();
-    const staticDir = isDev ? undefined : path.join(__dirname, "..", "dist");
+    // The engine serves the renderer from a real folder: in a packaged app the build output is
+    // unpacked from the asar archive (see "asarUnpack" in the electron-builder config).
+    const staticDir = isDev
+      ? undefined
+      : app.isPackaged
+        ? path.join(process.resourcesPath, "app.asar.unpacked", "dist")
+        : path.join(__dirname, "..", "dist");
     const fullArgs = [...args, "-m", "aerobench.api.server"];
     if (staticDir) fullArgs.push("--static", staticDir);
     if (isDev) fullArgs.push("--dev");
@@ -145,6 +151,10 @@ function registerIpc(): void {
   });
   ipcMain.handle("app:versions", () => ({ app: app.getVersion(), electron: process.versions.electron, chrome: process.versions.chrome }));
 }
+
+// Without a usable GPU (remote desktop, VMs) Chromium refuses WebGL unless the SwiftShader
+// software fallback is allowed. The app only renders its own localhost content.
+app.commandLine.appendSwitch("enable-unsafe-swiftshader");
 
 app.whenReady().then(async () => {
   Menu.setApplicationMenu(null);

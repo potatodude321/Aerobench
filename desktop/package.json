@@ -2,7 +2,7 @@
   "name": "aerobench-desktop",
   "private": true,
   "version": "0.1.0",
-  "description": "AeroBench (working title) — automotive CFD workbench desktop shell",
+  "description": "AeroBench (working title) \u2014 automotive CFD workbench desktop shell",
   "main": "dist-electron/main.js",
   "author": "AeroBench developers",
   "license": "UNLICENSED",
@@ -15,7 +15,8 @@
     "start": "npm run build && electron .",
     "test": "vitest run",
     "e2e": "playwright test",
-    "dist:win": "npm run build && electron-builder --win nsis"
+    "dist:win": "npm run build && electron-builder --win nsis",
+    "dist:linux": "npm run build && electron-builder --linux AppImage"
   },
   "dependencies": {
     "@mantine/core": "^9.7.1",
@@ -43,5 +44,68 @@
     "typescript": "~5.9.0",
     "vite": "^8.3.3",
     "vitest": "^5.0.3"
+  },
+  "build": {
+    "appId": "com.aerobench.workbench",
+    "productName": "AeroBench",
+    "directories": {
+      "output": "release",
+      "buildResources": "build-resources"
+    },
+    "files": [
+      "dist/**",
+      "dist-electron/**",
+      "package.json",
+      "!node_modules/**",
+      "!**/*.map"
+    ],
+    "asarUnpack": [
+      "dist/**"
+    ],
+    "extraResources": [
+      {
+        "from": "../packaging/build/python",
+        "to": "python",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "../packaging/build/THIRD-PARTY-LICENSES.txt",
+        "to": "THIRD-PARTY-LICENSES.txt"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "AeroBench-Setup-${version}.exe",
+      "icon": "build-resources/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AeroBench"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Science",
+      "icon": "build-resources/icon.png"
+    },
+    "publish": null,
+    "copyright": "Copyright \u00a9 2026",
+    "extraMetadata": {
+      "name": "aerobench"
+    }
   }
 }

@@ -1,3 +1,4 @@
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { AppShell, Badge, Box, Center, Group, Loader, NavLink, Stack, Switch, Text, Tooltip } from "@mantine/core";
 import {
   IconArrowsDiff,
@@ -226,7 +227,9 @@ export default function App() {
         </Stack>
       </AppShell.Navbar>
       <AppShell.Main style={{ height: "100vh", paddingTop: 46, background: "#0c0e12" }}>
-        <SectionContent section={section} />
+        <ErrorBoundary resetKey={section}>
+          <SectionContent section={section} />
+        </ErrorBoundary>
       </AppShell.Main>
     </AppShell>
   );

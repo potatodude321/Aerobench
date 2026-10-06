@@ -28,9 +28,19 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Props>(function Viewport3
   const [viewer, setViewer] = useState<Viewer | null>(null);
   useImperativeHandle(ref, () => ({ viewer }), [viewer]);
 
+  const [glError, setGlError] = useState<string | null>(null);
+
   useEffect(() => {
     if (!host.current) return;
-    const v = new Viewer(host.current);
+    let v: Viewer;
+    try {
+      v = new Viewer(host.current);
+    } catch (e) {
+      // No WebGL (remote desktop, virtual machine, blocked or very old GPU driver): everything
+      // except the in-app 3D view keeps working.
+      setGlError(String((e as Error)?.message || e));
+      return;
+    }
     setViewer(v);
     onReady?.(v);
     return () => v.dispose();
@@ -52,6 +62,16 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Props>(function Viewport3
   return (
     <div style={{ position: "relative", width: "100%", height: height ?? "100%", minHeight: 200, overflow: "hidden", borderRadius: 8 }}>
       <div ref={host} style={{ position: "absolute", inset: 0 }} data-testid="viewport" />
+      {glError && (
+        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+          <div style={{ maxWidth: 460, color: "#c1c7d0", fontSize: 13, lineHeight: 1.5, textAlign: "center" }}>
+            <b>3D view unavailable.</b> The graphics system did not provide WebGL (common over remote desktop, in virtual machines or with
+            outdated GPU drivers). All other functions work; flow images can still be produced by ParaView in reports or with “Open in
+            ParaView”.
+            <div style={{ opacity: 0.6, fontSize: 11, marginTop: 8 }}>{glError}</div>
+          </div>
+        </div>
+      )}
       {toolbar && viewer && (
         <Paper shadow="sm" p={4} radius="md" style={{ position: "absolute", top: 8, right: 8, background: "rgba(20,23,29,0.85)" }}>
           <Group gap={2}>

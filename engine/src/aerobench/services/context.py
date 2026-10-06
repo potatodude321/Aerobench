@@ -64,4 +64,11 @@ class AppContext:
             "paraview": self.paraview(),
             "hardware": self.hardware(),
             "max_cores": self.max_cores(),
+            "cad_import": _cad_backends(),
         }
+
+
+def _cad_backends() -> list[str]:
+    from ..geometry.cad import available_backends
+
+    return available_backends()

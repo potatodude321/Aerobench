@@ -50,10 +50,14 @@ def parse_definition(kind: str, data: dict[str, Any]) -> Definition:
     raise _err("study.kind", f"Unknown study kind '{kind}'.")
 
 
-def baseline_values(cfg: ProjectConfig, variables: list[DesignVariable]) -> dict[str, Any]:
+def baseline_values(cfg: ProjectConfig, variables: list[DesignVariable], project: Optional[Project] = None) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for v in variables:
         b = v.baseline if v.baseline is not None else baseline_value(cfg, v.target)
+        if b is None and v.target == "mesh.base_cell_size" and project is not None:
+            from .mesh import plan_mesh
+
+            b = round(plan_mesh(project, cfg)[0].base_cell, 6)  # the preset's resolved background cell
         if b is None:
             raise _err("study.baseline_unknown", f"Variable '{v.id}' has no baseline value (target {v.target} is unset in the project).",
                        "Give the variable an explicit baseline.")
@@ -140,7 +144,7 @@ def preview(project: Project, ctx: AppContext, kind: str, data: dict[str, Any]) 
     out: dict[str, Any] = {"errors": errs, "designs": [], "n_runs": 0}
     if errs:
         return out
-    base = baseline_values(project.config, defn.variables)
+    base = baseline_values(project.config, defn.variables, project)
     if isinstance(defn, StudyDefinition):
         try:
             designs = generate(defn, base)
@@ -174,7 +178,7 @@ def start(project: Project, ctx: AppContext, kind: str, data: dict[str, Any], la
     yr = _yaw_range(defn, cfg)
     if yr and cfg.tunnel.design_yaw_range_deg is None:
         cfg.tunnel.design_yaw_range_deg = yr
-    base = baseline_values(cfg, defn.variables)
+    base = baseline_values(cfg, defn.variables, project)
     space = DesignSpace(defn.variables)
     # keep the definition in the project (upsert by id)
     def keep(c: ProjectConfig) -> None:

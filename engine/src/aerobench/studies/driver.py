@@ -461,6 +461,9 @@ def summarise(rt: StudyRuntime) -> dict[str, Any]:
         counts[d["status"]] = counts.get(d["status"], 0) + 1
     unconverged = sum(1 for d in ds if d["status"] == "completed" and not (d.get("convergence") or {}).get("all_converged", False))
     out: dict[str, Any] = {"counts": counts, "n_designs": len(ds), "unconverged": unconverged}
+    gci_out = mesh_sensitivity(rt, ds)
+    if gci_out:
+        out["gci"] = gci_out
     if rt.kind == "optimisation":
         defn: OptimisationDefinition = rt.defn
         feas = [d for d in ds if d["status"] == "completed" and d.get("feasible")]
@@ -481,6 +484,33 @@ def summarise(rt: StudyRuntime) -> dict[str, Any]:
             out["pareto_design_ids"] = [d["id"] for d, k in zip(feas, mask) if k]
         out["infeasible"] = sum(1 for d in ds if d["status"] == "completed" and not d.get("feasible"))
     return out
+
+
+def mesh_sensitivity(rt: StudyRuntime, ds: list[dict]) -> Optional[dict[str, Any]]:
+    """GCI for studies that vary only the background cell size (three finest completed meshes)."""
+    if rt.kind != "study":
+        return None
+    var = [v for v in rt.defn.variables if v.target == "mesh.base_cell_size"]
+    if len(var) != 1 or len(rt.defn.variables) != 1:
+        return None
+    vid = var[0].id
+    done = sorted((d for d in ds if d["status"] == "completed"), key=lambda d: float(d["values"][vid]))
+    sizes = []
+    for d in done:
+        if not sizes or abs(float(d["values"][vid]) - sizes[-1][0]) > 1e-12:
+            sizes.append((float(d["values"][vid]), d))
+    if len(sizes) < 3:
+        return None
+    from ..validation.gci import gci
+
+    trio = sizes[:3]
+    res = {}
+    for m in rt.defn.metrics:
+        vals = [((d.get("metrics") or {}).get("aggregate") or {}).get(m, {}).get("mean") for _, d in trio]
+        if any(v is None for v in vals):
+            continue
+        res[m] = gci([h for h, _ in trio], vals).as_dict()
+    return {"variable": vid, "designs": [d["id"] for _, d in trio], "results": res} if res else None
 
 
 def _json(v: Any) -> str:

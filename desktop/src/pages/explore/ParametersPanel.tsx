@@ -52,6 +52,16 @@ export function ParametersPanel() {
   const [dirty, setDirty] = useState(false);
   const [withCheck, setWithCheck] = useState(true);
   const viewer = useRef<Viewer | null>(null);
+  const framed = useRef(false);
+
+  const onViewer = (v: Viewer) => {
+    viewer.current = v;
+    api.binary(`/api/p/${pid()}/geometry/preview.abg`).then((buf) => {
+      v.setGeometry(decodeAbg(buf), { colorByPart: true });
+      v.view("iso");
+      framed.current = true;
+    }).catch(() => undefined);
+  };
 
   useEffect(() => {
     api.get(`/api/p/${pid()}/parameters`).then((r) => {
@@ -106,7 +116,10 @@ export function ParametersPanel() {
       setRange(r);
       v.setResult("deformed", abg, { colormap: "Viridis (matplotlib)", range: r });
       setCheck(abg.header.check);
-      if (!v.resultIds().length) v.view("iso");
+      if (!framed.current) {
+        v.view("iso");
+        framed.current = true;
+      }
     } catch (e) {
       notifyError(e);
     } finally {
@@ -228,7 +241,7 @@ export function ParametersPanel() {
   return (
     <PageLayout side={side} sideWidth={460}>
       <div style={{ position: "relative", height: "100%" }}>
-        <Viewport3D onReady={(v) => (viewer.current = v)} />
+        <Viewport3D onReady={onViewer} />
         <div style={{ position: "absolute", left: 12, bottom: 12, width: 300 }}>
           <ColorLegend title="Displacement" colormap="Viridis (matplotlib)" range={range} units="mm" />
         </div>

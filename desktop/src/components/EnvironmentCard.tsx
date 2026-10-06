@@ -78,6 +78,14 @@ export function EnvironmentCard() {
             </Alert>
           )}
         </div>
+        <Group justify="space-between">
+          <Text size="sm" fw={600}>
+            CAD import (STEP/IGES)
+          </Text>
+          <Badge color={(environment.cad_import || []).length ? "teal" : "gray"} variant="light">
+            {(environment.cad_import || []).length ? environment.cad_import.join(", ") : "not installed"}
+          </Badge>
+        </Group>
         <Text size="xs" c="dimmed">
           {hw.physical_cores} physical cores · {hw.logical_cores} threads · {hw.memory_gb} GB RAM · {hw.os}
         </Text>

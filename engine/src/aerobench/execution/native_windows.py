@@ -140,21 +140,30 @@ class NativeWindowsProvider(ExecutionProvider):
         if info.mpi.launcher:
             path_parts.append(str(Path(info.mpi.launcher).parent))
         path_parts.append(os.environ.get("PATH", ""))
-        return {
+        env = {
             "WM_PROJECT": "OpenFOAM",
             "WM_PROJECT_VERSION": info.version or "",
             "WM_PROJECT_DIR": pdir,
+            "FOAM_ETC": str(Path(pdir) / "etc") if pdir else "",
             "FOAM_SIGFPE": "1",
+            # buffered sends in Pstream need an attached MPI buffer (same default as etc/bashrc)
+            "MPI_BUFFER_SIZE": os.environ.get("MPI_BUFFER_SIZE", "20000000"),
             "PATH": os.pathsep.join(p for p in path_parts if p),
         }
+        if "USER" not in os.environ and os.environ.get("USERNAME"):
+            env["USER"] = os.environ["USERNAME"]
+        return env
 
     def exec_path(self, host_path: Path) -> str:
         return win_path(host_path)
 
     def command(self, app_argv: list[str], case_dir: Path, nprocs: int = 1) -> CommandSpec:
+        """The case is the working directory (OpenFOAM's default case is ``.``): no case path
+        travels through mpiexec's command-line re-quoting, so folders with spaces or non-ASCII
+        characters are safe.  MS-MPI starts local ranks in mpiexec's working directory."""
         info = self.info()
         exe = str(Path(info.bin_dir or "") / (app_argv[0] + ".exe"))
-        argv = [exe] + list(app_argv[1:]) + ["-case", self.exec_path(case_dir)]
+        argv = [exe] + list(app_argv[1:])
         if nprocs > 1:
             argv = [info.mpi.launcher or "mpiexec.exe", "-n", str(nprocs)] + argv + ["-parallel"]
         return CommandSpec(argv=argv, env=self.environment(), cwd=str(case_dir))

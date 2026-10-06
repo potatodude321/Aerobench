@@ -337,7 +337,8 @@ def _study_sections(project: Project, sid: str) -> tuple[list[dict], list[dict],
     if hist:
         xs = [h["idx"] for h in hist]
         blocks.append({"kind": "svg", "svg": svg.line_chart({"evaluated": (xs, [h["value"] for h in hist]), "best feasible": (xs, [h["best"] for h in hist])},
-                                                            "Optimisation history", "design #", defn["objectives"][0]["metric"])})
+                                                            "Optimisation history", "design #", defn["objectives"][0]["metric"],
+                                                            markers={"evaluated"})})
     if st["kind"] == "optimisation" and len(defn.get("objectives", [])) == 2:
         o1, o2 = defn["objectives"][0]["metric"], defn["objectives"][1]["metric"]
         pts = [((d.get("objectives") or [{}, {}])[0].get("value"), (d.get("objectives") or [{}, {}])[1].get("value"), d["id"]) for d in designs
@@ -354,6 +355,15 @@ def _study_sections(project: Project, sid: str) -> tuple[list[dict], list[dict],
             blocks.append({"kind": "svg", "svg": svg.line_chart(series, f"Response to {v}", v, "value")})
         except (TypeError, ValueError):
             pass
+    g = summ.get("gci")
+    if g:
+        grow = [[m, r["status"], _f(r.get("order"), 3), _f(r.get("extrapolated"), 5),
+                 "—" if r.get("gci_fine") is None else f"{r['gci_fine'] * 100:.2f} %", _f(r.get("asymptotic_ratio"), 3), r.get("note", "")]
+                for m, r in g["results"].items()]
+        blocks.append({"kind": "table", "title": "Mesh sensitivity — grid convergence index (Celik et al. 2008)",
+                       "header": ["Quantity", "Convergence", "Observed order", "Extrapolated", "GCI (fine)", "Asymptotic ratio", "Note"],
+                       "rows": grow, "num_cols": [2, 3, 4, 5],
+                       "caption": "Three finest meshes; GCI with safety factor 1.25. An asymptotic ratio near 1 indicates the asymptotic range."})
     blocks.append({"kind": "table", "title": "Designs", "header": header, "rows": rows, "num_cols": [0] + list(range(3, 3 + len(var_ids) + len(metrics)))})
     csv_text = export_csv(project, sid)
     return [{"title": "Design exploration: " + (st.get("name") or sid), "blocks": blocks}], callouts, [], csv_text

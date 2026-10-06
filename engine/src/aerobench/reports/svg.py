@@ -104,7 +104,8 @@ def _wrap(width: int, height: int, body: list[str]) -> str:
 
 def line_chart(series: dict[str, tuple[Sequence[float], Sequence[float]]], title: str = "", xlabel: str = "", ylabel: str = "",
                logy: bool = False, width: int = 640, height: int = 280, band: Optional[tuple[float, float]] = None,
-               ylim: Optional[tuple[float, float]] = None) -> str:
+               ylim: Optional[tuple[float, float]] = None, markers: Optional[set[str]] = None) -> str:
+    """Line chart; series named in ``markers`` are drawn as points only."""
     pts = {k: [(float(x), float(y)) for x, y in zip(*v) if y is not None and math.isfinite(float(y)) and (not logy or float(y) > 0)]
            for k, v in series.items()}
     pts = {k: v for k, v in pts.items() if v}
@@ -125,8 +126,12 @@ def line_chart(series: dict[str, tuple[Sequence[float], Sequence[float]]], title
     for i, (name, p) in enumerate(pts.items()):
         if ylim:
             p = [(x, min(max(y, ylo), yhi)) for x, y in p]
+        col = PALETTE[i % len(PALETTE)]
+        if markers and name in markers:
+            body.extend(f'<circle cx="{fr.x(x):.1f}" cy="{fr.y(y):.1f}" r="3.2" fill="{col}"/>' for x, y in p)
+            continue
         d = " ".join(f"{'M' if j == 0 else 'L'}{fr.x(x):.1f},{fr.y(y):.1f}" for j, (x, y) in enumerate(p))
-        body.append(f'<path d="{d}" fill="none" stroke="{PALETTE[i % len(PALETTE)]}" stroke-width="1.3"/>')
+        body.append(f'<path d="{d}" fill="none" stroke="{col}" stroke-width="1.3"/>')
     if len(pts) > 1:
         body += _legend(fr, list(pts))
     return _wrap(width, height, body)

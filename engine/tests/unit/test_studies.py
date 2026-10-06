@@ -238,3 +238,22 @@ def test_study_report_is_self_contained(env):
     assert "<svg" in html and "Design exploration" in html and "http" not in html.split("<body>")[1].replace("http://www.w3.org", "")
     csv = reports_svc.report_file(p, rep["id"], "data.csv").read_text()
     assert len(csv.splitlines()) == 4
+
+
+def test_mesh_sensitivity_study_reports_gci(env, monkeypatch):
+    p, ctx, calls = env
+    import tests.unit.test_studies as me
+
+    def mesh_physics(cfg):
+        h = cfg.mesh.base_cell_size
+        return {"Cd": 0.30 + 2.0 * h**2, "Cl": -0.1 + h, "Cl_front": 0, "Cl_rear": 0, "balance_front_pct": 40.0, "drag_N": 1, "downforce_N": 1}
+
+    monkeypatch.setattr(me, "physics", mesh_physics)
+    defn = {"id": "mesh", "name": "Mesh sensitivity", "kind": "one_factor", "include_baseline": False,
+            "variables": [{"id": "h", "target": "mesh.base_cell_size", "lower": 0.1, "upper": 0.5}], "levels": {"h": [0.4, 0.2, 0.1]},
+            "metrics": ["Cd", "Cl"]}
+    sid = svc.start(p, ctx, "study", defn, launch_worker=False)["id"]
+    drive(p, ctx)
+    g = svc.detail(p, sid)["summary"]["gci"]["results"]
+    assert g["Cd"]["status"] == "monotonic" and g["Cd"]["order"] == pytest.approx(2.0, abs=1e-6)
+    assert g["Cd"]["extrapolated"] == pytest.approx(0.30, abs=1e-9)

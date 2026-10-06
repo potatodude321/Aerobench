@@ -2,7 +2,7 @@
 
 Two back-ends, tried in order:
 
-1. **OpenCASCADE via OCP** (``pip install cadquery-ocp``; LGPL-2.1) — in-process.  Each CAD
+1. **OpenCASCADE via OCP** (``pip install cadquery-ocp-novtk``; LGPL-2.1) — in-process.  Each CAD
    solid (or, for surface models, each shell/face group) becomes a named region, so wheels,
    mirrors or wings modelled as separate bodies arrive as separate regions.
 2. **Gmsh executable** (separate GPL program, invoked as an external process, never linked)
@@ -67,7 +67,7 @@ def tessellate_cad(path: Path, linear_rel: float = LINEAR_DEFLECTION_REL, angula
         "geometry.cad_backend_missing", ErrorCategory.GEOMETRY,
         f"'{path.name}' is a CAD file, and no CAD tessellation component is installed.",
         likely_cause="STEP/IGES must be converted to a triangulated surface before meshing.",
-        action="Install the CAD component (pip install cadquery-ocp in the engine environment), install Gmsh and set AEROBENCH_GMSH, "
+        action="Install the CAD component (pip install cadquery-ocp-novtk in the engine environment), install Gmsh and set AEROBENCH_GMSH, "
                "or export a fine STL/OBJ from your CAD system.",
     )
 

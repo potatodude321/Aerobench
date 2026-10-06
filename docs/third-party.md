@@ -29,10 +29,18 @@ distribution reviewed before release.
 | psutil | BSD-3-Clause |
 | Jinja2 | BSD-3-Clause |
 | python-multipart | Apache-2.0 |
-| cadquery-ocp (optional "cad" extra) | Apache-2.0 bindings to Open CASCADE Technology (LGPL-2.1 with OCCT exception; dynamically loaded) |
+| cadquery-ocp-novtk ("cad" extra; shipped in the Windows installer) | Apache-2.0 bindings to Open CASCADE Technology (LGPL-2.1 with OCCT exception; dynamically loaded) |
 | pytest, httpx, ruff (development only) | MIT / BSD-3-Clause / MIT |
 
 The packaged application uses the official embeddable CPython distribution (PSF licence).
+
+Binary wheels vendor native libraries (`*.libs` folders) without their own metadata:
+OpenBLAS in NumPy/SciPy and, in the CAD component, Open CASCADE Technology (LGPL-2.1 with
+the OCCT exception, dynamically loaded and replaceable) with its image/font dependencies
+(FreeImage under the FreeImage Public License, LibRaw under LGPL-2.1, FreeType under the
+FTL, and BSD/MIT/zlib-style libraries). `packaging/licenses.py` lists every vendored DLL with
+the licence it is used under in `THIRD-PARTY-LICENSES.txt`, and reports an unknown DLL as
+"not determined" so it cannot ship unnoticed.
 
 ## Desktop dependencies
 

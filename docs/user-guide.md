@@ -23,7 +23,8 @@ up; it contains the configuration, the database, geometry revisions, meshes, run
 
 ## 3. Geometry
 
-* **Import** STL, OBJ or PLY (and STEP/IGES when CAD import is installed). Units are detected
+* **Import** STL, OBJ, PLY, STEP, IGES or BREP (CAD import is part of the Windows installer;
+  in a development environment it needs the `cad` extra). Units are detected
   from the size (a car in millimetres is recognised) and can be changed; set the forward and
   up axes if the file is not in the usual orientation.
 * **Diagnostics** list open edges, non-manifold edges, inverted normals, self-touching islands

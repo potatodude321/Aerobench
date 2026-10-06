@@ -17,7 +17,7 @@
 cd engine
 python -m venv .venv
 # Windows: .venv\Scripts\activate     Linux/macOS: . .venv/bin/activate
-pip install -e .[dev]          # add ,cad for STEP/IGES import (OpenCASCADE via cadquery-ocp)
+pip install -e .[dev]          # add ,cad for STEP/IGES import (OpenCASCADE via cadquery-ocp-novtk)
 aerobench doctor               # solver / MPI / ParaView / hardware report
 python -m pytest tests/unit    # fast, no external tools (~1 min)
 python -m pytest tests/integration -m "openfoam"            # real OpenFOAM pipeline (~5–10 min)

@@ -1,7 +1,7 @@
 <#
   Build the Windows installer (run on Windows 10/11 x64 in PowerShell from the repo root).
 
-    powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1 [-Cad] [-PythonSha256 <hash>]
+    powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1 [-NoCad] [-PythonSha256 <hash>]
 
   Requires: Python 3.11+ on PATH (build tool only), Node.js 20+, Git.
   Output:   desktop\release\AeroBench-Setup-<version>.exe
@@ -16,7 +16,7 @@
   detects them and links to the official downloads.
 #>
 param(
-  [switch]$Cad,
+  [switch]$NoCad,
   [string]$PythonVersion = "3.12.10",
   [string]$PythonSha256 = "",
   [switch]$SkipTests
@@ -38,13 +38,13 @@ if (-not $SkipTests) {
 
 Step "Embedded Python runtime"
 $args = @("packaging\prepare_python.py", "--python-version", $PythonVersion)
-if ($Cad) { $args += "--cad" }
+if ($NoCad) { $args += "--no-cad" }
 if ($PythonSha256) { $args += @("--sha256", $PythonSha256) }
 python @args
 if ($LASTEXITCODE -ne 0) { throw "prepare_python failed" }
 
 Step "Smoke test of the embedded engine"
-& packaging\build\python\python.exe -c "import aerobench, aerobench.api.app, numpy, scipy; print('engine', aerobench.__name__, 'ok')"
+& packaging\build\python\python.exe -c "import aerobench, aerobench.api.app, numpy, scipy; from aerobench.geometry.cad import available_backends; print('engine ok; CAD back-ends:', available_backends())"
 if ($LASTEXITCODE -ne 0) { throw "embedded engine does not import" }
 & packaging\build\python\python.exe -m aerobench.cli doctor
 # exit code 2 only means OpenFOAM is not installed on the build machine

@@ -3,7 +3,7 @@
 
 Runs on Windows or Linux (cross-installs Windows wheels):
 
-    python packaging/prepare_python.py --python-version 3.12.10 [--cad] [--sha256 <hash>]
+    python packaging/prepare_python.py --python-version 3.12.10 [--no-cad] [--sha256 <hash>]
 
 Result (``packaging/build``):
 
@@ -54,7 +54,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--python-version", default="3.12.10")
     ap.add_argument("--sha256", default=None, help="expected SHA-256 of the embeddable zip")
-    ap.add_argument("--cad", action="store_true", help="include OpenCASCADE (cadquery-ocp) for STEP/IGES import")
+    ap.add_argument("--no-cad", dest="cad", action="store_false",
+                    help="leave out OpenCASCADE (STEP/IGES/BREP import); included by default")
     ap.add_argument("--out", default=str(ROOT / "packaging" / "build"))
     args = ap.parse_args()
 
@@ -91,7 +92,7 @@ def main() -> int:
     engine_whl = next(wheels.glob("aerobench-*.whl"))
     # pip evaluates environment markers for the *running* interpreter, so Windows-only
     # dependencies of dependencies (colorama for click) are listed explicitly.
-    reqs = [str(engine_whl), "colorama"] + (["cadquery-ocp>=7.7"] if args.cad else [])
+    reqs = [str(engine_whl), "colorama"] + (["cadquery-ocp-novtk>=7.8"] if args.cad else [])
     run([sys.executable, "-m", "pip", "install", "--no-compile", "--target", str(site), "--platform", "win_amd64",
          "--python-version", ".".join(ver.split(".")[:2]), "--implementation", "cp", "--only-binary=:all:", "--upgrade", *reqs])
 

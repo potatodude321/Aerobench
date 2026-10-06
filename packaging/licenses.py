@@ -20,6 +20,51 @@ from pathlib import Path
 
 LICENSE_NAMES = ("LICENSE", "LICENCE", "COPYING", "NOTICE", "AUTHORS")
 
+# Native libraries vendored inside binary wheels (delvewheel ``*.libs`` folders) carry no
+# dist-info of their own.  Each known library is listed with the licence it is used under
+# (where a library is dual-licensed, the permissive option); an unknown DLL is reported as
+# undetermined so a release cannot ship it unnoticed.
+NATIVE_LIBS = [
+    ("TK", "Open CASCADE Technology (OCCT)", "LGPL-2.1 with the Open CASCADE Exception 1.0. Dynamically loaded; the DLLs may be "
+     "replaced by the user. Source code: https://github.com/Open-Cascade-SAS/OCCT (release matching the bundled OCP version)."),
+    ("FreeImage", "FreeImage", "FreeImage Public License 1.0 (used under FIPL; dual-licensed with GPL)."),
+    ("raw", "LibRaw", "LGPL-2.1 (dual-licensed with CDDL-1.0); dynamically loaded. Source: https://www.libraw.org."),
+    ("OpenEXR", "OpenEXR", "BSD-3-Clause"), ("Iex", "OpenEXR Iex", "BSD-3-Clause"), ("IlmThread", "OpenEXR IlmThread", "BSD-3-Clause"),
+    ("Imath", "Imath", "BSD-3-Clause"),
+    ("freetype", "FreeType", "FreeType License (used under FTL; dual-licensed with GPL-2.0). Portions of this software are "
+     "copyright (c) The FreeType Project (www.freetype.org). All rights reserved."),
+    ("jpeg", "libjpeg", "IJG License. This software is based in part on the work of the Independent JPEG Group."),
+    ("lcms2", "Little CMS", "MIT"), ("liblzma", "XZ Utils liblzma", "0BSD / public domain"), ("libpng", "libpng", "PNG Reference Library License v2"),
+    ("libwebp", "libwebp", "BSD-3-Clause"), ("libsharpyuv", "libwebp sharpyuv", "BSD-3-Clause"),
+    ("openjp2", "OpenJPEG", "BSD-2-Clause"), ("openjph", "OpenJPH", "BSD-2-Clause"), ("tiff", "LibTIFF", "libtiff License (BSD-like)"),
+    ("Lerc", "LERC", "Apache-2.0"), ("deflate", "libdeflate", "MIT"), ("zlib", "zlib", "zlib License"), ("zstd", "Zstandard", "BSD-3-Clause"),
+    ("libscipy_openblas", "OpenBLAS (scipy-openblas build)", "BSD-3-Clause; the full texts of OpenBLAS and its compiler runtime "
+     "(GCC Runtime Library Exception) are part of the numpy/scipy licence files below."),
+    ("msvcp140", "Microsoft Visual C++ runtime", "Microsoft Visual C++ Redistributable (distributable code)"),
+    ("vcruntime140", "Microsoft Visual C++ runtime", "Microsoft Visual C++ Redistributable (distributable code)"),
+    ("vcomp140", "Microsoft OpenMP runtime", "Microsoft Visual C++ Redistributable (distributable code)"),
+]
+
+
+def native_libraries(site: Path) -> list[dict]:
+    import re
+
+    out: dict[str, dict] = {}
+    for libdir in sorted(site.glob("*.libs")):
+        for f in sorted(libdir.iterdir()):
+            if f.suffix.lower() not in (".dll", ".so", ".dylib") and ".so." not in f.name:
+                continue
+            stem = re.sub(r"-[0-9a-f]{32}$", "", f.name.split(".")[0])
+            hit = next((n for n in NATIVE_LIBS if stem.startswith(n[0])), None)
+            key = hit[1] if hit else stem
+            entry = out.setdefault(key, {"name": key, "license": hit[2] if hit else "", "dirs": [], "files": 0})
+            entry["files"] += 1
+            if libdir.name not in entry["dirs"]:
+                entry["dirs"].append(libdir.name)
+    for e in out.values():
+        e["bundled_in"] = ", ".join(e.pop("dirs"))
+    return list(out.values())
+
 
 def python_packages(site: Path) -> list[dict]:
     out = []
@@ -79,8 +124,10 @@ def main() -> int:
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
     py = python_packages(Path(a.site_packages))
+    native = native_libraries(Path(a.site_packages))
     js = node_packages(Path(a.node_modules)) if Path(a.node_modules).exists() else []
     unknown = [f"{p['name']} {p['version']}" for p in py + js if not p["license"] and not p["texts"]]
+    unknown += [f"native library {n['name']} (in {n['bundled_in']})" for n in native if not n["license"]]
     lines = ["THIRD-PARTY SOFTWARE LICENCES", "=" * 30, ""]
     lines += ["OpenFOAM, ParaView, Microsoft MPI and Gmsh are not included; they are installed separately by the user.", ""]
     if unknown:
@@ -89,6 +136,11 @@ def main() -> int:
         lines += [title, "-" * len(title)]
         lines += [f"{p['name']} {p['version']} — {p['license'] or 'see text'}" for p in pkgs]
         lines.append("")
+        if title.startswith("Python") and native:
+            sub_title = "Native libraries bundled inside Python wheels"
+            lines += [sub_title, "-" * len(sub_title)]
+            lines += [f"{n['name']} (in {n['bundled_in']}, {n['files']} file(s)) — {n['license'] or 'NOT DETERMINED'}" for n in native]
+            lines.append("")
     for p in py + js:
         for t in p["texts"]:
             lines += ["", "=" * 78, f"{p['name']} {p['version']}", "=" * 78, t.strip()]

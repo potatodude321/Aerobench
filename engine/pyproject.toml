@@ -22,8 +22,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-timeout>=2.3", "httpx>=0.27", "ruff>=0.6"]
-# STEP/IGES/BREP import via OpenCASCADE (LGPL-2.1, in-process)
-cad = ["cadquery-ocp>=7.7"]
+# STEP/IGES/BREP import via OpenCASCADE (LGPL-2.1, in-process); the VTK-free build keeps the
+# runtime ~50 MB smaller and pulls in no plotting stack
+cad = ["cadquery-ocp-novtk>=7.8"]
 
 [project.scripts]
 aerobench = "aerobench.cli:main"

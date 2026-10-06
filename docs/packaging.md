@@ -4,7 +4,7 @@
 
 ```powershell
 # on Windows 10/11 x64, from the repository root
-powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1 -PythonSha256 <sha256-of-embed-zip> [-Cad]
+powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1 -PythonSha256 <sha256-of-embed-zip> [-NoCad]
 ```
 
 Result: `desktop\release\AeroBench-Setup-<version>.exe` — an NSIS installer (per-user, no
@@ -16,8 +16,8 @@ What the script does:
 2. `packaging/prepare_python.py` downloads the official **embeddable CPython** (3.12, x64),
    verifies its SHA-256 (pass the digest published on python.org for release builds), enables
    `site-packages`, builds the engine wheel and installs it with all dependencies as
-   **win_amd64 wheels only** (`--only-binary=:all:`), optionally with OpenCASCADE for CAD
-   import (`--cad`, adds ~70 MB). Windows-only transitive dependencies (e.g. `colorama`)
+   **win_amd64 wheels only** (`--only-binary=:all:`), including OpenCASCADE for STEP/IGES/BREP
+   import (the VTK-free `cadquery-ocp-novtk` build, ~48 MB download; `--no-cad` leaves it out). Windows-only transitive dependencies (e.g. `colorama`)
    are listed explicitly because pip evaluates markers for the build machine.
 3. `packaging/licenses.py` writes `THIRD-PARTY-LICENSES.txt` with the licence of every shipped
    Python and JavaScript package; packages without a determinable licence are listed first

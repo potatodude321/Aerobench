@@ -16,7 +16,7 @@ feature gating or telemetry in the code base.
 
 | Area | Capabilities |
 |---|---|
-| Geometry | STL (ASCII multi-solid / binary), OBJ, PLY; unit and orientation detection; diagnostics (open edges, non-manifold, inverted normals, islands); repair pipeline; automatic component and wheel identification; frontal area; ride height and rake |
+| Geometry | STL (ASCII multi-solid / binary), OBJ, PLY, STEP, IGES, BREP (OpenCASCADE tessellation, one region per solid); unit and orientation detection; diagnostics (open edges, non-manifold, inverted normals, islands); repair pipeline; automatic component and wheel identification; frontal area; ride height and rake |
 | Wind tunnel | Domain presets in vehicle lengths with blockage ratio; moving or stationary ground; rotating wheels (rotating-wall velocity); yaw by rotated inflow with free-stream far field; half model; contact-patch treatment |
 | Mesh | Automatic snappyHexMesh plan (surface, wake, underbody, wheel and front refinement regions); boundary layers sized for a target y+; parallel meshing; checkMesh and layer-coverage reporting with engineering findings |
 | Physics & numerics | Steady incompressible RANS (k-ω SST, Spalart–Allmaras, realizable k-ε); versioned numerics presets (robust → high fidelity) with first-order start; derived quantities (Re, y+, inlet turbulence) shown before running |

@@ -262,13 +262,24 @@ def L(*items: Any) -> List:
     return List([coerce(i) for i in items])
 
 
+def clean(x: float, digits: int = 12) -> float:
+    """Round computed values to ``digits`` significant figures (removes binary noise such
+    as 0.31999999999999995 so generated dictionaries are readable and stable)."""
+    x = float(x)
+    if x == 0.0 or not math.isfinite(x):
+        return 0.0 if x == 0.0 else x
+    return float(f"{x:.{digits}g}")
+
+
 def vec(v) -> List:
-    return List([float(x) for x in v])
+    return List([clean(x) for x in v])
 
 
 def uniform(value: Any) -> Tokens:
     if isinstance(value, (list, tuple)) or hasattr(value, "tolist"):
         return Tokens([Word("uniform"), vec(value)])
+    if isinstance(value, float):
+        value = clean(value)
     return Tokens([Word("uniform"), coerce(value)])
 
 

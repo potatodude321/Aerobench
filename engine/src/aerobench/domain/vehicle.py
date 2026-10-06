@@ -44,6 +44,8 @@ class Wheel(Model):
         # move rearward (+x) is -y (ADR-0008).  Accept either sign from the user, then fix.
         if a[1] > 0:
             a = -a
+        a = np.where(np.abs(a) < 1e-9, 0.0, a)
+        a = a / np.linalg.norm(a)
         return (float(a[0]), float(a[1]), float(a[2]))
 
 

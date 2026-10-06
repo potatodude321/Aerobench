@@ -32,8 +32,7 @@ def fmt_number(x: Any) -> str:
         return "0"
     if float(x).is_integer() and abs(x) < 1e15:
         return str(int(x))
-    s = repr(float(x))
-    return s
+    return repr(float(x))  # shortest exact round-trip representation
 
 
 def fmt_string(s: str) -> str:

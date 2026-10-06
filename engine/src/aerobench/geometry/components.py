@@ -208,6 +208,14 @@ def identify_components(surf_cfd: TriSurface, ground_z: Optional[float] = None) 
         else:
             for rname in regions:
                 comps.append(GeometryComponent(id=uid(rname), name=rname, source_regions=[rname], role=role, suggested=True))
+    order = {WheelPosition.FL: 0, WheelPosition.FR: 1, WheelPosition.RL: 2, WheelPosition.RR: 3}
+    def comp_key(c: GeometryComponent):
+        if c.role == ComponentRole.BODY:
+            return (0, 0, c.id)
+        if c.role == ComponentRole.WHEEL and c.wheel_position is not None:
+            return (1, order[c.wheel_position], c.id)
+        return (2, 0, c.id)
+    comps.sort(key=comp_key)
     if len(wheels) not in (0, 4):
         notes.append(f"{len(wheels)} wheel(s) detected — check the wheel assignments.")
     return IdentificationResult(comps, sorted(wheels, key=lambda w: w.position.value), notes)

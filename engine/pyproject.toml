@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aerobench"
+version = "0.1.0"
+description = "Automotive external-aerodynamics workbench engine (OpenFOAM + ParaView orchestration)"
+requires-python = ">=3.11"
+license = { text = "Proprietary - all rights reserved" }
+dependencies = [
+  "pydantic>=2.9,<3",
+  "numpy>=1.26",
+  "scipy>=1.12",
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "psutil>=5.9",
+  "jinja2>=3.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-timeout>=2.3", "httpx>=0.27"]
+
+[project.scripts]
+aerobench = "aerobench.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+aerobench = ["viz/server/*.py", "reports/templates/*.j2", "reports/templates/*.css", "project/sql/*.sql"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+timeout = 1800
+markers = [
+  "openfoam: requires a working OpenFOAM installation (integration)",
+  "paraview: requires pvpython (visualisation integration)",
+  "slow: long-running engineering regression",
+]

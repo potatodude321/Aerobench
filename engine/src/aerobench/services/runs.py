@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, Optional
 
@@ -12,7 +11,6 @@ from ..core.ids import short_id, utc_now_iso
 from ..domain.project import ProjectConfig, solve_stage_input, validate_project
 from ..foam.adapters import get_adapter
 from ..foam.case.builder import assert_no_dynamic_code, build_solve_case
-from ..foam.case.numerics import preset_def
 from ..foam.logs.solver_log import parse_solver_log
 from ..jobs.manager import JobManager
 from ..jobs.spec import CopyStep, DictSetStep, FoamStep, JobStatus, LinkMeshStep, RemoveStep, StageStep

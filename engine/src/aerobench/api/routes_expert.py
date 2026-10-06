@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import PlainTextResponse
@@ -14,7 +13,6 @@ from ..foam.case.builder import build_mesh_case, build_solve_case
 from ..foam.case.generated import diff_text
 from ..foam.parser import parse, strip_header
 from ..foam.ast import to_json
-from ..project.db import dec
 from ..services.mesh import plan_mesh
 from ..services.runs import run_record
 from .app import EngineState, engine

@@ -18,7 +18,7 @@ from ..geometry.components import identify_components
 from ..geometry.frontal_area import projected_area
 from ..geometry.inspect import UNIT_CANDIDATES, inspect_surface
 from ..geometry.io import read_surface
-from ..geometry.pose import ground_z, posed_components
+from ..geometry.pose import posed_components
 from ..geometry.trisurface import TriSurface
 from ..project.store import Project
 

@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ title }}</title>
+<style>
+  :root { --ink:#1b1f24; --muted:#5d6670; --line:#d9dde2; --accent:#0b7285; --warn:#b35c00; --bad:#c92a2a; --ok:#2b8a3e; }
+  * { box-sizing: border-box; }
+  body { font-family: Helvetica, Arial, sans-serif; color: var(--ink); margin: 0; background: #fff; font-size: 12.5px; line-height: 1.45; }
+  main { max-width: 1000px; margin: 0 auto; padding: 28px 28px 60px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 16px; margin: 28px 0 8px; padding-bottom: 4px; border-bottom: 2px solid var(--accent); }
+  h3 { font-size: 13px; margin: 16px 0 6px; }
+  .sub { color: var(--muted); }
+  table { border-collapse: collapse; width: 100%; margin: 6px 0 10px; }
+  th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: #f4f6f8; font-weight: 600; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .kv td:first-child { color: var(--muted); width: 38%; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .badge { display: inline-block; padding: 1px 7px; border-radius: 9px; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; }
+  .b-ok { background: #d3f9d8; color: var(--ok); } .b-warn { background: #fff3bf; color: var(--warn); } .b-bad { background: #ffe3e3; color: var(--bad); }
+  .callout { border-left: 4px solid var(--warn); background: #fff9db; padding: 8px 12px; margin: 10px 0; }
+  .callout.bad { border-color: var(--bad); background: #fff5f5; }
+  .callout.info { border-color: var(--accent); background: #e3fafc; }
+  figure { margin: 10px 0; break-inside: avoid; }
+  figure img { width: 100%; border: 1px solid var(--line); }
+  figcaption { color: var(--muted); font-size: 11px; margin-top: 3px; }
+  code, .mono { font-family: Consolas, Menlo, monospace; font-size: 11px; }
+  pre { white-space: pre-wrap; word-break: break-all; background: #f8f9fa; padding: 8px; border: 1px solid var(--line); font-size: 10.5px; }
+  .neg { color: var(--ok); } .pos { color: var(--bad); }
+  footer { margin-top: 36px; color: var(--muted); font-size: 10.5px; border-top: 1px solid var(--line); padding-top: 8px; }
+  @media print { main { padding: 0; max-width: none; } h2 { break-after: avoid; } table, figure, .callout { break-inside: avoid; } }
+  @page { size: A4; margin: 14mm 12mm; }
+</style>
+</head>
+<body><main>
+<header>
+  <h1>{{ title }}</h1>
+  <div class="sub">{{ subtitle }}</div>
+  <div class="sub">Project <b>{{ project.name }}</b> · generated {{ generated_at }} · {{ app_name }} {{ app_version }}</div>
+</header>
+
+{% for c in callouts %}<div class="callout {{ c.level }}">{{ c.text }}</div>{% endfor %}
+
+{% if notes %}<h2>Notes</h2><p>{{ notes }}</p>{% endif %}
+
+{% for s in sections %}
+<section>
+  <h2>{{ s.title }}</h2>
+  {% if s.intro %}<p>{{ s.intro }}</p>{% endif %}
+  {% for b in s.blocks %}
+    {% if b.kind == "kv" %}
+      {% if b.title %}<h3>{{ b.title }}</h3>{% endif %}
+      <table class="kv">{% for k, v in b.rows %}<tr><td>{{ k }}</td><td>{{ v }}</td></tr>{% endfor %}</table>
+    {% elif b.kind == "table" %}
+      {% if b.title %}<h3>{{ b.title }}</h3>{% endif %}
+      <table><thead><tr>{% for h in b.header %}<th class="{{ 'num' if loop.index0 in b.num_cols else '' }}">{{ h }}</th>{% endfor %}</tr></thead>
+      <tbody>{% for row in b.rows %}<tr>{% for c in row %}<td class="{{ 'num' if loop.index0 in b.num_cols else '' }}">{{ c|safe if b.html else c }}</td>{% endfor %}</tr>{% endfor %}</tbody></table>
+      {% if b.caption %}<div class="sub">{{ b.caption }}</div>{% endif %}
+    {% elif b.kind == "svg" %}
+      <figure>{{ b.svg|safe }}{% if b.caption %}<figcaption>{{ b.caption }}</figcaption>{% endif %}</figure>
+    {% elif b.kind == "images" %}
+      <div class="{{ 'grid2' if b.pics|length > 1 else '' }}">
+      {% for im in b.pics %}<figure><img src="{{ im.src }}" alt="{{ im.caption }}"><figcaption>{{ im.caption }}</figcaption></figure>{% endfor %}
+      </div>
+    {% elif b.kind == "text" %}
+      <p>{{ b.text }}</p>
+    {% elif b.kind == "callout" %}
+      <div class="callout {{ b.level }}">{{ b.text }}</div>
+    {% elif b.kind == "pre" %}
+      {% if b.title %}<h3>{{ b.title }}</h3>{% endif %}<pre>{{ b.text }}</pre>
+    {% endif %}
+  {% endfor %}
+</section>
+{% endfor %}
+
+<footer>
+  Sign conventions (ADR-0007): drag + rearward; lift + up (downforce = −lift); side force + to the vehicle's right; pitching moment + nose up;
+  yawing moment + nose right; rolling moment + right side down. Aero balance = front downforce / total downforce (flagged when the total is small).
+  Coefficients use the reference values listed with each run. Values are averaged over the stated iteration window.
+  All numbers in this report are read from the stored OpenFOAM outputs; nothing is estimated or filled in.
+</footer>
+</main></body></html>

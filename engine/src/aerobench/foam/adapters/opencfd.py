@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..ast import Dict, Str, vec
+from ..ast import Dict, vec
 from .base import ForkAdapter
 
 

@@ -72,7 +72,7 @@ class WSLProvider(ExecutionProvider):
         try:
             out = subprocess.run(["wsl.exe", "-d", distro, "--", "bash", "-c", probe], capture_output=True, text=True, timeout=60)
             ver, pdir, mpirun = (out.stdout.strip().split("|") + ["", "", ""])[:3]
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             ver, pdir, mpirun = "", "", ""
         if not ver:
             return ProviderInfo(id=self.id, kind=self.kind, label=f"WSL2 ({distro})", available=False, staging=self.staging,

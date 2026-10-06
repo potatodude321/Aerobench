@@ -10,7 +10,6 @@ import threading
 import time
 from collections import OrderedDict
 from importlib import resources
-from pathlib import Path
 from typing import Any, Optional
 
 from ..core.errors import AeroBenchError, ErrorCategory

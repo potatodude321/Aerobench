@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends
-from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from ..services.compare import compare_runs
@@ -25,10 +24,7 @@ def compare(pid: str, body: CompareBody, e: EngineState = Depends(engine)):
     return compare_runs(e.projects.get(pid), body.run_ids, body.baseline, body.metrics)
 
 
-# Studies / optimisation / reports are registered by their modules when available.
-try:
-    from .routes_studies import register as _register_studies
+# Studies, optimisation, geometry parameters and reports
+from .routes_studies import register as _register_studies  # noqa: E402
 
-    _register_studies(router)
-except ImportError:  # pragma: no cover - during incremental development
-    pass
+_register_studies(router)

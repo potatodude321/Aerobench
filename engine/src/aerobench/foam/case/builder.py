@@ -12,7 +12,7 @@ from ...aero.flow import InletTurbulenceValues, inlet_turbulence
 from ...aero.forces import freestream_direction
 from ...core.errors import AeroBenchError, ErrorCategory
 from ...domain.geometry import ComponentRole, GeometryComponent
-from ...domain.mesh import BoxShape, CylinderShape, LayerMode, RotatedBoxShape, SphereShape
+from ...domain.mesh import BoxShape, CylinderShape, RotatedBoxShape, SphereShape
 from ...domain.project import ProjectConfig
 from ...domain.setup import FarfieldBC, GroundMode, InletTurbulenceSpec, Symmetry, WallTreatment, YawGroundMode
 from ...domain.vehicle import WheelRotation

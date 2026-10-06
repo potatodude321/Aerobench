@@ -9,7 +9,7 @@ from typing import Any, Optional
 
 import numpy as np
 
-from ..aero.forces import AeroResult, ReferenceSpec, metrics_dict, reduce_forces, transfer_moment
+from ..aero.forces import AeroResult, ReferenceSpec, metrics_dict, reduce_forces
 from ..domain.project import ProjectConfig
 from ..domain.setup import Symmetry
 from ..foam.logs.datfiles import read_series, read_yplus

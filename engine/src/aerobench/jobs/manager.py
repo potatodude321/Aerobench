@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -12,7 +11,6 @@ from typing import Any, Optional
 from ..core.errors import AeroBenchError, ErrorCategory
 from ..core.fs import atomic_write_text
 from ..core.ids import short_id, utc_now_iso
-from ..project.db import dec
 from ..project.store import Project
 from .process import is_alive, launch_detached, python_executable
 from .spec import JobSpec, JobState, JobStatus, Step, read_state, write_model

@@ -123,6 +123,8 @@ class Scheduling(Model):
     cores_per_run: int = Field(1, ge=1)
     max_retries: int = Field(1, ge=0, le=5)
     reuse_meshes: bool = True
+    accept_unconverged: bool = Field(True, description="Use designs whose runs finished without meeting the convergence "
+                                     "criteria (flagged); if false they count as failed evaluations")
 
 
 class StudyDefinition(Model):

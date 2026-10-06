@@ -85,14 +85,18 @@ def _dump(model: Any) -> Any:
 
 
 def geometry_stage_input(cfg: ProjectConfig) -> dict[str, Any]:
-    return {
+    out = {
         "revision": cfg.geometry.revision_id,
         "transform": _dump(cfg.geometry.transform),
         "components": [_dump(c) for c in cfg.geometry.components],
         "vehicle_pose": {"ride_height_offset": cfg.vehicle.ride_height_offset, "rake_deg": cfg.vehicle.rake_deg},
-        "parameters": [_dump(p) for p in cfg.parameters],
-        "parameter_values": dict(sorted(cfg.parameter_values.items())),
     }
+    # Geometry parameters are applied by creating a new geometry revision, so the revision id
+    # already captures their effect; definitions alone (e.g. a parameter just added) must not
+    # invalidate existing meshes.
+    if cfg.geometry.sizing_box is not None:
+        out["sizing_box"] = _dump(cfg.geometry.sizing_box)
+    return out
 
 
 def effective_yaw_range(cfg: ProjectConfig) -> tuple[float, float]:

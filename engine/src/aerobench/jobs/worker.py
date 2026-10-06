@@ -20,7 +20,6 @@ from ..core.ids import utc_now_iso
 from ..project.store import Project
 from .manager import JobManager
 from .process import create_time, is_alive, launch_detached, python_executable
-from .spec import JobStatus
 
 LOCK = ".worker.lock"
 TERMINAL = ("completed", "failed", "stopped", "interrupted", "cancelled")
@@ -84,7 +83,8 @@ class Worker:
             if new.value != j["status"]:
                 report["refreshed"].append(j["id"])
         ing = _ingestors()
-        for j in self.db.all("SELECT * FROM jobs WHERE ingested = 0 AND status IN ('completed','failed','stopped','interrupted') ORDER BY ended_at"):
+        for j in self.db.all("SELECT * FROM jobs WHERE ingested = 0 AND status IN ('completed','failed','stopped','interrupted','cancelled') "
+                             "ORDER BY ended_at"):
             fn = ing.get(j["kind"])
             try:
                 if fn and j["target_id"]:
@@ -98,8 +98,6 @@ class Worker:
             from ..studies.driver import drive_all
 
             report["studies"] = drive_all(self.project, self.ctx)
-        except ImportError:
-            pass
         except Exception:  # noqa: BLE001
             self.db.log_event("study_driver_error", None, error=traceback.format_exc()[-3000:])
         self._schedule(report)
@@ -128,7 +126,8 @@ class Worker:
         for j in self.db.all("SELECT * FROM jobs WHERE status = 'queued' ORDER BY priority DESC, created_at"):
             dep = self._dependency_state(j["depends_on"])
             if dep == "failed":
-                self.db.update("jobs", "id", j["id"], {"status": "cancelled", "ended_at": utc_now_iso(),
+                # ingested=1: the run record is finalised right here with the reason
+                self.db.update("jobs", "id", j["id"], {"status": "cancelled", "ended_at": utc_now_iso(), "ingested": 1,
                                                        "message": f"Cancelled: prerequisite job {j['depends_on']} did not complete successfully."})
                 if j["kind"] == "solve" and j["target_id"]:
                     from ..core.errors import Diagnostic, ErrorCategory
@@ -156,7 +155,7 @@ class Worker:
 
     def has_work(self) -> bool:
         active = self.db.one("SELECT COUNT(*) AS n FROM jobs WHERE status IN ('queued','starting','running','stopping') OR "
-                             "(ingested = 0 AND status IN ('completed','failed','stopped','interrupted'))")["n"]
+                             "(ingested = 0 AND status IN ('completed','failed','stopped','interrupted','cancelled'))")["n"]
         studies = self.db.one("SELECT COUNT(*) AS n FROM studies WHERE status = 'running'")["n"]
         return bool(active or studies)
 

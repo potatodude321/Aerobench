@@ -95,6 +95,11 @@ export const api = {
     if (!r.ok) await handle(r);
     return r.arrayBuffer();
   },
+  async postBinary(path: string, body: unknown): Promise<ArrayBuffer> {
+    const r = await fetch(engineUrl(path), { method: "POST", headers: headers({ "Content-Type": "application/json" }), body: JSON.stringify(body) });
+    if (!r.ok) await handle(r);
+    return r.arrayBuffer();
+  },
   async upload<T = any>(path: string, file: File, fields: Record<string, string> = {}): Promise<T> {
     const fd = new FormData();
     fd.append("file", file);

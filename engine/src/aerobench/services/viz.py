@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, Optional
 
@@ -154,8 +153,8 @@ def _camera_for(preset: dict, cx: float, L: float, s) -> dict[str, Any]:
         n = preset["params"]["normal"]
         o = preset["params"]["origin"]
         if abs(n[1]) > 0.5:  # side view
-            return {"position": [cx, -3.0 * L, zc], "focal_point": [cx + 0.25 * L, 0, zc], "view_up": [0, 0, 1]}
+            return {"position": [cx + 0.2 * L, -1.9 * L, zc], "focal_point": [cx + 0.2 * L, 0, zc], "view_up": [0, 0, 1]}
         if abs(n[0]) > 0.5:  # looking upstream from behind
             return {"position": [o[0] + 2.0 * L, o[1], o[2]], "focal_point": o, "view_up": [0, 0, 1]}
-        return {"position": [cx, 0, -3.0 * L], "focal_point": [cx, 0, 0], "view_up": [1, 0, 0]}  # from below
+        return {"position": [cx, 0, -2.0 * L], "focal_point": [cx, 0, 0], "view_up": [1, 0, 0]}  # from below
     return {"position": [cx - 1.2 * L, -1.4 * L, zc + 0.8 * L], "focal_point": [cx, 0, zc], "view_up": [0, 0, 1]}

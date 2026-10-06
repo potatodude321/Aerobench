@@ -20,6 +20,26 @@ PREFIX = "@@AB@@"
 _out = sys.__stdout__ if sys.__stdout__ is not None else os.fdopen(1, "w")
 _in = sys.__stdin__ if sys.__stdin__ is not None else os.fdopen(0, "r")
 
+# Colormap names differ between ParaView releases (e.g. "Viridis (matplotlib)" in 5.x is
+# "Viridis" in 6.x); never fail a render because of a preset name.
+COLORMAP_ALIASES = {
+    "Viridis (matplotlib)": ["Viridis", "viridis"],
+    "Viridis": ["Viridis (matplotlib)"],
+    "Inferno (matplotlib)": ["Inferno", "inferno"],
+    "Plasma (matplotlib)": ["Plasma", "plasma"],
+    "Blue Orange (divergent)": ["Blue Orange", "Cool to Warm"],
+}
+
+
+def apply_colormap(lut, name):
+    for cand in [name] + COLORMAP_ALIASES.get(name, []) + ["Cool to Warm"]:
+        try:
+            if lut.ApplyPreset(cand, True):
+                return cand
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
 
 def reply(obj):
     _out.write(PREFIX + json.dumps(obj) + "\n")
@@ -32,7 +52,6 @@ sys.stdout = sys.stderr
 from paraview import servermanager as sm  # noqa: E402
 from paraview.simple import (  # noqa: E402
     Calculator,
-    CellDatatoPointData,
     Clip,
     ColorBy,
     Contour,
@@ -434,7 +453,7 @@ def op_screenshot(p):
         disp = Show(src, view)
         ColorBy(disp, ("POINTS", fname, item.get("component", "Magnitude")))
         lut = GetColorTransferFunction(fname)
-        lut.ApplyPreset(item.get("colormap", "Cool to Warm"), True)
+        apply_colormap(lut, item.get("colormap", "Cool to Warm"))
         if item.get("range"):
             lut.RescaleTransferFunction(*item["range"])
         if item.get("clip_box"):
@@ -450,8 +469,10 @@ def op_screenshot(p):
             col = [1, 1, 1] if dark else [0.1, 0.1, 0.1]
             bar.TitleColor = col
             bar.LabelColor = col
-            bar.TitleFontSize = 14
-            bar.LabelFontSize = 12
+            h = int(p.get("size", [1600, 900])[1])
+            bar.TitleFontSize = max(14, h // 40)
+            bar.LabelFontSize = max(12, h // 50)
+            bar.ScalarBarLength = 0.4
     cam = p.get("camera")
     view.ResetCamera()
     if cam:

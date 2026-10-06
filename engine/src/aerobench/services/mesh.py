@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Optional
 
 from ..core.errors import AeroBenchError, Diagnostic, ErrorCategory, Severity, raise_if_errors
@@ -34,6 +33,10 @@ def plan_mesh(project: Project, cfg: Optional[ProjectConfig] = None) -> tuple[Me
     cfg = cfg or project.config
     ext = vehicle_extent(project, cfg)
     frontal = cfg.reference.area_computed or cfg.reference.area
+    sb = cfg.geometry.sizing_box
+    if sb is not None:
+        ext = {**ext, "actual_bbox_min": ext["bbox_min"], "actual_bbox_max": ext["bbox_max"], "bbox_min": list(sb.bbox_min),
+               "bbox_max": list(sb.bbox_max), "clearance": sb.clearance if sb.clearance is not None else ext["clearance"]}
     plan = resolve_mesh_plan(cfg, ext["bbox_min"], ext["bbox_max"], ext["ground_z"], ext["areas"], ext["clearance"], frontal)
     rc = resolve_case(cfg, plan)
     return plan, rc, ext
@@ -141,7 +144,7 @@ def ingest_mesh(project: Project, mesh_id: str) -> dict[str, Any]:
         diags.extend(quality_diagnostics(check, snappy, row, project))
         if any(d.code in ("mesh.leak", "mesh.disconnected") for d in diags):
             status = "failed"
-    elif job_status in (JobStatus.STOPPED, JobStatus.INTERRUPTED):
+    elif job_status in (JobStatus.STOPPED, JobStatus.INTERRUPTED, JobStatus.CANCELLED):
         status = job_status.value
     project.db.update("mesh_revisions", "id", mesh_id, {
         "status": status,
@@ -175,7 +178,7 @@ def quality_diagnostics(check, snappy, row: dict, project: Project) -> list[Diag
         except Exception:  # noqa: BLE001
             body_vol = None
         if body_vol and body_vol > 0:
-            if half := plan.get("half_model"):
+            if plan.get("half_model"):
                 body_vol *= 0.5
             if check.total_volume > dom - 0.5 * body_vol:
                 add("mesh.leak", Severity.ERROR, "The mesh leaked into the vehicle interior.",

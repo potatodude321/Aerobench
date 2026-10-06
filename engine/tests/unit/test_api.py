@@ -106,3 +106,34 @@ def test_reference_lock_requires_confirmation(client, tmp_path):
     assert r.status_code == 409 and r.json()["error"]["code"] == "reference.locked"
     r = client.patch(f"/api/p/{pid}/config", json={"reference": {"area": 2.5, "area_source": "manual", "confirm_after_results": True}})
     assert r.status_code == 200 and r.json()["config"]["reference"]["area"] == 2.5
+
+
+def test_exploration_endpoints(client, tmp_path):
+    pid = _project(client, tmp_path)
+    t = client.get(f"/api/p/{pid}/studies/targets")
+    assert t.status_code == 200 and any(x["target"] == "operating.yaw_deg" for x in t.json())
+    defn = {"id": "y", "name": "Yaw", "kind": "one_factor", "variables": [{"id": "yaw", "target": "operating.yaw_deg", "lower": -5, "upper": 5}],
+            "levels": {"yaw": [-5, 0, 5]}}
+    pr = client.post(f"/api/p/{pid}/studies/preview", json={"kind": "study", "definition": defn}).json()
+    assert not pr["errors"] and len(pr["designs"]) == 3 and pr["notes"]
+    bad = client.post(f"/api/p/{pid}/studies/preview", json={"kind": "optimisation", "definition": {
+        "id": "o", "name": "O", "algorithm": "gp_bo", "variables": defn["variables"],
+        "objectives": [{"metric": "Cd"}, {"metric": "Cl"}]}})
+    assert bad.status_code == 422  # multi-objective GP-BO is rejected by the model
+    assert client.get(f"/api/p/{pid}/studies").json() == []
+    # geometry parameters round trip + preview payload with validity check
+    params = [{"id": "nose", "name": "Nose", "lower": -0.03, "upper": 0.03, "baseline": 0.0, "components": ["body"],
+               "deformation": {"kind": "rbf", "handles": [[[0.0, 0.0, 0.5], [-1.0, 0.0, 0.0]]], "support_radius": 0.6}}]
+    r = client.put(f"/api/p/{pid}/parameters", json={"parameters": params})
+    assert r.status_code == 200, r.text
+    assert client.get(f"/api/p/{pid}/parameters").json()["parameters"][0]["id"] == "nose"
+    b = client.post(f"/api/p/{pid}/parameters/preview.abg", json={"values": {"nose": 0.02}})
+    assert b.status_code == 200 and b.content[:4] == b"ABG1"
+    from aerobench.viz.payload import unpack
+
+    header, arrays = unpack(b.content)
+    assert header["check"]["valid"] is True and 0.019 < header["check"]["stats"]["max_displacement"] < 0.021
+    assert arrays["scalars"].max() == pytest.approx(20.0, rel=0.05)  # mm
+    r = client.put(f"/api/p/{pid}/parameters", json={"parameters": [{**params[0], "components": ["nope"]}]})
+    assert r.status_code == 400
+    assert client.get(f"/api/p/{pid}/reports").json() == []

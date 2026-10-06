@@ -7,9 +7,9 @@ from contextlib import asynccontextmanager
 import threading
 import traceback
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket
+from fastapi import FastAPI, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
@@ -105,7 +105,7 @@ def create_app(ctx: Optional[AppContext] = None, token: str = "", dev_cors: bool
     @app.exception_handler(ValidationError)
     async def val_error(_: Request, exc: ValidationError):
         return JSONResponse({"error": {"code": "config.validation", "category": "configuration", "severity": "error",
-                                       "summary": "Invalid input.", "details": str(exc), "errors": exc.errors(include_url=False)}},
+                                       "summary": "Invalid input.", "details": str(exc), "errors": exc.errors(include_url=False, include_context=False)}},
                             status_code=422)
 
     @app.exception_handler(Exception)

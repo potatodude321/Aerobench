@@ -13,7 +13,6 @@ a watertight, outward-oriented :class:`TriSurface` with named regions.
 from __future__ import annotations
 
 import math
-from typing import Callable, Optional
 
 import numpy as np
 

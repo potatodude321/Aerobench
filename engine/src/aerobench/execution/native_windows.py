@@ -15,7 +15,6 @@ WM_THIRD_PARTY_DIR) and executables are launched directly — no MSYS2 shell.
 
 from __future__ import annotations
 
-import glob
 import os
 from pathlib import Path, PureWindowsPath
 from typing import Any, Optional

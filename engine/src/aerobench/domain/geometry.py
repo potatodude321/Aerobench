@@ -117,11 +117,26 @@ class GeometrySummary(Model):
         return self.bbox_max[2] - self.bbox_min[2]
 
 
+class SizingBox(Model):
+    """Frozen vehicle extents used to size the tunnel and refinement regions.
+
+    Set on design variants (parameterised geometry, alternative geometry, changed pose) so
+    every design of a study shares the baseline's domain and refinement layout; otherwise
+    small geometry changes would also move the refinement boxes and add mesh noise to the
+    comparison."""
+
+    bbox_min: Vec3
+    bbox_max: Vec3
+    clearance: Optional[float] = None
+    source: str = Field("baseline", description="What the extents were frozen from")
+
+
 class GeometryConfig(Model):
     revision_id: Optional[str] = Field(None, description="Active geometry revision (content-addressed in the project DB)")
     transform: GeometryTransform = Field(default_factory=GeometryTransform)
     components: list[GeometryComponent] = Field(default_factory=list)
     summary: Optional[GeometrySummary] = Field(None, description="Measured after transform; refreshed on change")
+    sizing_box: Optional[SizingBox] = Field(None, description="Frozen extents for domain/refinement sizing (design variants)")
 
     @field_validator("components")
     @classmethod

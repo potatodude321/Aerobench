@@ -18,41 +18,8 @@ from aerobench.services import geometry as geo
 from aerobench.services.mesh import mesh_record
 from aerobench.services.runs import ingest_run, prepare_run, reproduce_run, run_record
 
-from .conftest import coarse_mesh
 
 pytestmark = [pytest.mark.openfoam, pytest.mark.slow]
-
-
-def _drain(project, ctx, max_ticks=400):
-    w = Worker(project, ctx, launch_inline=True)
-    for _ in range(max_ticks):
-        w.tick()
-        if not w.has_work():
-            return
-    raise AssertionError("worker did not finish")
-
-
-@pytest.fixture(scope="module")
-def solved(tmp_path_factory, ctx):
-    root = tmp_path_factory.mktemp("proj") / "CarProject"
-    stl = tmp_path_factory.mktemp("geom") / "synthetic_car.stl"
-    write_stl(stl, generic_car())
-    p = Project.create(root, "Synthetic car")
-    imp = geo.import_geometry(p, stl)
-    assert imp["units"] == "m" and len(imp["identification"]["wheels"]) == 4
-
-    def setup(c):
-        c.mesh = coarse_mesh()
-        c.tunnel = c.tunnel.model_copy(update=dict(upstream=1.5, downstream=3.0, lateral=1.2, top=1.2))
-        c.numerics.iterations = 120
-        c.numerics.first_order_iterations = 40
-        c.execution.n_procs = 2
-        c.operating.speed = 30.0
-
-    p.update(setup)
-    res = prepare_run(p, ctx)
-    _drain(p, ctx)
-    return p, res
 
 
 def test_mesh_completed_with_quality_report(solved):

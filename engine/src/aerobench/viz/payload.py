@@ -91,3 +91,13 @@ def unpack(buf: bytes) -> tuple[dict, dict[str, np.ndarray]]:
         arrays[b["name"]] = np.frombuffer(buf, dtype=dt, count=b["count"], offset=off)
         off += size + ((-size) % 4)
     return header, arrays
+
+
+def read_header(path) -> dict:
+    """Read only the JSON header of an ABG file."""
+    with open(path, "rb") as fh:
+        head = fh.read(8)
+        if head[:4] != MAGIC:
+            raise ValueError("not an ABG payload")
+        (n,) = struct.unpack_from("<I", head, 4)
+        return json.loads(fh.read(n).decode())

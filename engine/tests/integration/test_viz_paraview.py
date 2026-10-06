@@ -1,0 +1,64 @@
+"""ParaView 6.2 sidecar integration on a real OpenFOAM result (no mocks)."""
+
+import numpy as np
+import pytest
+
+from aerobench.services.viz import VizService
+from aerobench.viz.payload import unpack
+
+pytestmark = [pytest.mark.openfoam, pytest.mark.paraview, pytest.mark.slow]
+
+
+@pytest.fixture(scope="module")
+def viz(ctx):
+    v = VizService(ctx)
+    yield v
+    v.close()
+
+
+def test_presets_extract_valid_geometry(solved, viz):
+    p, res = solved
+    run_id = res["run_id"]
+    presets = {pr["id"]: pr for pr in viz.presets(p, run_id)}
+    for required in ("cp_body", "yplus_body", "centreline_cp", "rear_wake", "front_wheel_wake", "rear_wheel_wake",
+                     "underfloor_velocity", "streamlines", "q_wake"):
+        assert required in presets, required
+    for pid in ("cp_body", "centreline_cp", "rear_wake", "underfloor_velocity", "streamlines", "yplus_body"):
+        pr = presets[pid]
+        out = viz.extract(p, run_id, pr["op"], pr["params"])
+        hdr, arrays = unpack(viz.payload_path(p, run_id, out["key"]).read_bytes())
+        n = hdr["n_points"]
+        assert n > 50, pid
+        assert len(arrays["positions"]) == 3 * n
+        assert len(arrays["scalars"]) == n
+        assert np.isfinite(arrays["scalars"]).mean() > 0.99
+        if "indices" in arrays:
+            assert arrays["indices"].max() < n
+    # Cp on the body: stagnation near 1, suction below 0
+    out = viz.extract(p, run_id, "surface", presets["cp_body"]["params"])
+    lo, hi = out["header"]["scalar_range"]
+    assert 0.8 < hi < 1.3 and lo < -0.3
+    # second request is served from the cache
+    assert viz.extract(p, run_id, "surface", presets["cp_body"]["params"])["cached"]
+
+
+def test_q_isosurface_and_line_sample(solved, viz):
+    p, res = solved
+    out = viz.extract(p, res["run_id"], "isosurface", {"field": "Q", "values": [20.0], "color_field": "U_ratio"})
+    assert out["header"]["n_points"] > 100
+    ls = viz.line_sample(p, res["run_id"], p1=[-2, 0, 0.7], p2=[-0.05, 0, 0.7], resolution=40, fields=["p", "U"])
+    u = [x for x in ls["U"] if x is not None]
+    assert u[0] > u[-1]  # flow decelerates towards the stagnation point
+
+
+def test_report_screenshot(solved, viz, tmp_path):
+    p, res = solved
+    png = viz.preset_screenshot(p, res["run_id"], "centreline_cp", out_dir=tmp_path, size=(800, 450))
+    assert png.exists() and png.stat().st_size > 15000
+
+
+def test_expert_script(solved, viz):
+    p, res = solved
+    s = viz.expert_script(p, res["run_id"], ["cp_body", "rear_wake"])
+    assert "OpenFOAMReader" in s and "Slice" in s
+    compile(s, "script", "exec")

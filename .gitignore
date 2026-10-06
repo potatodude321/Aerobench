@@ -12,3 +12,4 @@ venv/
 /desktop/release/
 /scratch/
 .DS_Store
+dist-electron/

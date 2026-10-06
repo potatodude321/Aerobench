@@ -81,6 +81,8 @@ def prepare_mesh(project: Project, ctx: AppContext, cfg: Optional[ProjectConfig]
     if n > 1 and not pinfo.mpi.available:
         n = 1
     cfg.execution.n_procs = n
+    for d in provider.check_case(project.root, n):
+        raise AeroBenchError(d)
     mesh_id = short_id("mesh")
     mdir = project.mesh_dir(mesh_id)
     (mdir / "constant" / "triSurface").mkdir(parents=True)

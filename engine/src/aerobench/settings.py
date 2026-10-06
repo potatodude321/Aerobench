@@ -34,6 +34,16 @@ class AppSettings(BaseModel):
     recent_projects: list[str] = Field(default_factory=list)
     worker_idle_timeout_s: int = 300
     expert_mode: bool = False
+    projects_dir: Optional[str] = None  # default parent folder for new projects
+
+    def default_projects_dir(self) -> str:
+        if self.projects_dir:
+            return self.projects_dir
+        home = Path.home()
+        if os.name == "nt":
+            docs = home / "Documents"
+            return str((docs if docs.is_dir() else home) / "AeroBench Projects")
+        return str(home / "AeroBench-Projects")
 
     @classmethod
     def load(cls) -> "AppSettings":

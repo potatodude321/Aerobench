@@ -68,7 +68,7 @@ class EngineState:
         self.viz = VizService(ctx)
 
 
-def create_app(ctx: Optional[AppContext] = None, token: str = "", dev_cors: bool = False) -> FastAPI:
+def create_app(ctx: Optional[AppContext] = None, token: str = "", dev_cors: bool = False, static_dir: Optional[str] = None) -> FastAPI:
     state = EngineState(ctx or AppContext(), token)
 
     @asynccontextmanager
@@ -123,6 +123,12 @@ def create_app(ctx: Optional[AppContext] = None, token: str = "", dev_cors: bool
 
     for r in (core, geometry, runs, viz, expert, explore, ws):
         app.include_router(r)
+
+    if static_dir and Path(static_dir).is_dir():
+        from fastapi.staticfiles import StaticFiles
+
+        # The renderer bundle is public (no secrets); every /api route still requires the token.
+        app.mount("/", StaticFiles(directory=static_dir, html=True), name="ui")
 
     return app
 

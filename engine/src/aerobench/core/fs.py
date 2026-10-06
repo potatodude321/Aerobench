@@ -100,6 +100,19 @@ def sha256_tree(root: Path, include: Iterable[str] | None = None) -> str:
     return h.hexdigest()
 
 
+_FOLDER_BAD = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def project_folder_name(name: str) -> str:
+    """Folder name for a new project.  Characters invalid on Windows are replaced; on
+    Linux/macOS whitespace is also replaced because OpenFOAM there rejects spaces in paths
+    (the native Windows build accepts them)."""
+    s = _FOLDER_BAD.sub("_", name.strip()).rstrip(". ")
+    if os.name != "nt":
+        s = re.sub(r"\s+", "_", s)
+    return s or "project"
+
+
 def safe_name(name: str, fallback: str = "item") -> str:
     """OpenFOAM-safe identifier (word): letters, digits, underscore; must not start with digit."""
     s = _SAFE.sub("_", name.strip()).strip("._-")

@@ -9,6 +9,8 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from ..aero.forces import METRIC_INFO
+from ..core.errors import AeroBenchError, ErrorCategory
+from ..core.fs import project_folder_name
 from ..domain.project import ProjectConfig, validate_project
 from ..domain.templates import apply_template, list_templates
 from ..jobs.manager import JobManager
@@ -60,14 +62,27 @@ def metric_info():
     return METRIC_INFO
 
 
+@router.get("/air")
+def air(temperature_c: float = 20.0, pressure_pa: float = 101325.0):
+    """Dry-air properties (ideal gas + Sutherland) — single source of truth for the UI."""
+    from ..aero.flow import air_properties
+
+    p = air_properties(temperature_c, pressure_pa)
+    return {"density": round(p["density"], 5), "kinematic_viscosity": float(f"{p['kinematic_viscosity']:.5g}"),
+            "dynamic_viscosity": p["dynamic_viscosity"], "temperature_c": temperature_c, "pressure_pa": pressure_pa}
+
+
 @router.get("/numerics-presets")
 def numerics_presets():
     return setup_svc.numerics_presets()
 
 
 class CreateProject(BaseModel):
-    path: str
+    """Either an exact ``path`` or a ``parent`` folder (the project folder name is derived from ``name``)."""
+
     name: str
+    path: Optional[str] = None
+    parent: Optional[str] = None
     template_id: Optional[str] = None
 
 
@@ -91,11 +106,25 @@ def create_project(body: CreateProject, e: EngineState = Depends(engine)):
     cfg = ProjectConfig()
     if body.template_id:
         cfg = apply_template(cfg, body.template_id)
-    p = Project.create(Path(body.path), body.name, cfg)
+    if body.path:
+        root = Path(body.path)
+    elif body.parent:
+        Path(body.parent).mkdir(parents=True, exist_ok=True)
+        root = Path(body.parent) / project_folder_name(body.name)
+    else:
+        raise AeroBenchError.make("project.path_missing", ErrorCategory.PROJECT, "No folder was given for the new project.")
+    p = Project.create(root, body.name, cfg)
     e.projects.add(p)
     e.ctx.settings.add_recent(str(p.root))
     e.ctx.settings.save()
     return _project_payload(p, e)
+
+
+@router.get("/projects/defaults")
+def project_defaults(name: str = "", e: EngineState = Depends(engine)):
+    parent = e.ctx.settings.default_projects_dir()
+    return {"parent": parent, "folder_name": project_folder_name(name) if name else None,
+            "path": str(Path(parent) / project_folder_name(name)) if name else None}
 
 
 @router.post("/projects/open")

@@ -94,6 +94,10 @@ class ExecutionProvider(ABC):
         """Path of ``host_path`` as seen by the solver processes."""
         return str(host_path)
 
+    def check_case(self, case_dir: Path, nprocs: int) -> list[Diagnostic]:
+        """Provider-specific preconditions checked *before* a job is queued."""
+        return []
+
     # ------------------------------------------------------------------ staging (staged providers)
     def stage_in(self, case_dir: Path) -> Optional[CommandSpec]:
         return None

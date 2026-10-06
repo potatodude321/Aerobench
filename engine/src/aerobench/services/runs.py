@@ -80,6 +80,8 @@ def prepare_run(
     if n > 1 and not pinfo.mpi.available:
         n = 1
     cfg.execution.n_procs = n
+    for d in provider.check_case(project.root, n):
+        raise AeroBenchError(d)
     # mesh: reuse a matching completed/pending mesh or create one
     m = find_mesh(project, cfg, ("completed", "queued", "running", "starting"))
     mesh_job = None

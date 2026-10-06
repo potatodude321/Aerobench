@@ -33,6 +33,10 @@ class Rule:
 R = lambda p: re.compile(p, re.I | re.M)  # noqa: E731
 
 RULES: list[Rule] = [
+    Rule("environment.path_invalid", ErrorCategory.ENVIRONMENT, R(r"fileName::stripInvalid\(\) called for invalid fileName"),
+         "OpenFOAM rejected the case path (it contains spaces or other characters invalid on Linux).",
+         "OpenFOAM on Linux/WSL does not accept spaces in file names; the native Windows build does.",
+         "Move the project to a folder without spaces, or update the application (it links such paths automatically)."),
     Rule("mesh.location_in_mesh", ErrorCategory.MESH,
          R(r"(locationInMesh|location in mesh|Point \(.*\) is not inside the mesh|not inside the mesh or on a face)"),
          "The meshing seed point (locationInMesh) is not inside the flow domain.",

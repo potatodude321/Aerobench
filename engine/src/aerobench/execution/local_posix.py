@@ -133,11 +133,48 @@ class LocalPosixProvider(ExecutionProvider):
             staging=self.staging, problems=problems, details={"bashrc": rc, "options": env.get("WM_OPTIONS")},
         )
 
+    @staticmethod
+    def safe_case_path(case_dir: Path) -> str:
+        """OpenFOAM on POSIX rejects file names with spaces (``allowSpaceInFileName`` is read
+        too late to help ``-case``).  Route such cases through a space-free symlink."""
+        s = str(case_dir)
+        if not any(c in s for c in ' \t"\'') :
+            return s
+        import hashlib
+        import tempfile
+
+        base = Path(os.environ.get("AEROBENCH_LINK_DIR", Path(tempfile.gettempdir()) / "aerobench-links"))
+        base.mkdir(parents=True, exist_ok=True)
+        link = base / hashlib.sha1(s.encode()).hexdigest()[:16]
+        if link.is_symlink() and os.readlink(link) != s:
+            link.unlink()
+        if not link.exists():
+            try:
+                link.symlink_to(s, target_is_directory=True)
+            except FileExistsError:
+                pass
+        return str(link)
+
+    def exec_path(self, host_path: Path) -> str:
+        return self.safe_case_path(host_path)
+
+    def check_case(self, case_dir: Path, nprocs: int) -> list[Diagnostic]:
+        if nprocs > 1 and " " in str(case_dir):
+            return [Diagnostic(
+                code="environment.path_spaces_parallel", category=ErrorCategory.ENVIRONMENT,
+                summary="Parallel OpenFOAM runs on Linux cannot use a project folder whose path contains spaces.",
+                likely_cause="OpenFOAM resolves the physical case path in parallel and rejects spaces (the native Windows build allows them).",
+                action="Move or save the project to a folder without spaces, or run on 1 core.",
+                details=str(case_dir))]
+        return []
+
     def command(self, app_argv: list[str], case_dir: Path, nprocs: int = 1) -> CommandSpec:
         env = dict(self.foam_env())
-        argv = list(app_argv) + ["-case", str(case_dir)]
+        case = self.safe_case_path(case_dir)
+        env["PWD"] = case
+        argv = list(app_argv) + ["-case", case]
         if nprocs > 1:
             info = self.info()
             launcher = info.mpi.launcher or "mpirun"
             argv = [launcher, "-np", str(nprocs)] + argv + ["-parallel"]
-        return CommandSpec(argv=argv, env=env, cwd=str(case_dir))
+        return CommandSpec(argv=argv, env=env, cwd=case)

@@ -29,6 +29,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--token", default=os.environ.get("AEROBENCH_TOKEN") or "")
     ap.add_argument("--dev", action="store_true", help="enable CORS for the Vite dev server and /api/docs")
     ap.add_argument("--no-token", action="store_true", help="development only: disable authentication")
+    ap.add_argument("--static", default=None, help="serve the built desktop renderer from this directory")
     args = ap.parse_args(argv)
     token = "" if args.no_token else (args.token or secrets.token_urlsafe(32))
     port = args.port or _free_port()
@@ -37,7 +38,7 @@ def main(argv: list[str] | None = None) -> int:
 
     from .app import create_app
 
-    app = create_app(token=token, dev_cors=args.dev)
+    app = create_app(token=token, dev_cors=args.dev, static_dir=args.static)
     print("AEROBENCH_READY " + json.dumps({"port": port, "token": token, "pid": os.getpid()}), flush=True)
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning", access_log=False)
     return 0

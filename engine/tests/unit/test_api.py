@@ -1,0 +1,108 @@
+import os
+
+import pytest
+from fastapi.testclient import TestClient
+
+from aerobench.api.app import create_app
+from aerobench.geometry.fixtures import generic_car
+from aerobench.geometry.io import write_stl
+from aerobench.services.context import AppContext
+from aerobench.settings import AppSettings
+
+TOKEN = "test-token"
+
+
+@pytest.fixture()
+def client(tmp_path, monkeypatch):
+    monkeypatch.setenv("AEROBENCH_CONFIG_DIR", str(tmp_path / "cfg"))
+    app = create_app(AppContext(AppSettings()), token=TOKEN)
+    with TestClient(app) as c:
+        c.headers["Authorization"] = f"Bearer {TOKEN}"
+        yield c
+
+
+def test_health_is_public_and_api_requires_token(tmp_path, monkeypatch):
+    monkeypatch.setenv("AEROBENCH_CONFIG_DIR", str(tmp_path / "cfg"))
+    app = create_app(AppContext(AppSettings()), token=TOKEN)
+    with TestClient(app) as c:
+        assert c.get("/api/health").status_code == 200
+        assert c.get("/api/templates").status_code == 401
+        assert c.get("/api/templates", headers={"Authorization": "Bearer nope"}).status_code == 401
+        assert c.get("/api/templates", headers={"Authorization": f"Bearer {TOKEN}"}).status_code == 200
+
+
+def _project(client, tmp_path, template="generic_road_car"):
+    r = client.post("/api/projects", json={"path": str(tmp_path / "P"), "name": "API test", "template_id": template})
+    assert r.status_code == 200, r.text
+    pid = r.json()["project_id"]
+    stl = tmp_path / "car.stl"
+    write_stl(stl, generic_car())
+    r = client.post(f"/api/p/{pid}/geometry/import", json={"path": str(stl)})
+    assert r.status_code == 200, r.text
+    return pid
+
+
+def test_project_geometry_config_flow(client, tmp_path):
+    pid = _project(client, tmp_path)
+    g = client.get(f"/api/p/{pid}/geometry").json()
+    assert len(g["wheels"]) == 4 and g["summary"]["triangle_count"] > 1000
+    assert g["reference"]["area"] == pytest.approx(g["reference"]["area_computed"])
+    st = client.get(f"/api/p/{pid}").json()
+    assert st["config"]["template_id"] == "generic_road_car"
+    assert not [v for v in st["validation"] if v["severity"] == "error"]
+    # patch config
+    r = client.patch(f"/api/p/{pid}/config", json={"operating": {"speed": 55.0, "yaw_deg": 5.0}})
+    assert r.status_code == 200 and r.json()["config"]["operating"]["speed"] == 55.0
+    # invalid values are rejected with a structured error
+    r = client.patch(f"/api/p/{pid}/config", json={"operating": {"speed": -1}})
+    assert r.status_code == 422 and r.json()["error"]["code"] == "config.validation"
+    # half-car + yaw is a blocking validation error
+    r = client.patch(f"/api/p/{pid}/config", json={"tunnel": {"symmetry": "half"}})
+    errs = [v for v in r.json()["validation"] if v["severity"] == "error"]
+    assert any(v["code"] == "tunnel.symmetry_yaw" for v in errs)
+    client.patch(f"/api/p/{pid}/config", json={"tunnel": {"symmetry": "full"}})
+    d = client.get(f"/api/p/{pid}/derived").json()
+    assert d["reynolds_length"] > 1e6 and d["wheels"][0]["omega_rad_s"] > 0
+    assert d["freestream_vector"][1] < 0  # yaw +5: wind from the right
+
+
+def test_mesh_plan_and_expert_preview(client, tmp_path):
+    pid = _project(client, tmp_path)
+    plan = client.get(f"/api/p/{pid}/mesh/plan").json()
+    assert plan["plan"]["estimate_cells"] > 100000
+    assert {r["kind"] for r in plan["plan"]["regions"]} >= {"wake_near", "wake_far", "underbody", "wheel"}
+    prev = client.get(f"/api/p/{pid}/expert/preview/solve").json()
+    assert "system/controlDict" in prev["files"] and "0/U" in prev["files"]
+    assert "rotatingWallVelocity" in prev["files"]["0/U"]
+    prev_m = client.get(f"/api/p/{pid}/expert/preview/mesh").json()
+    assert "snappyHexMeshDict" in "".join(prev_m["files"])
+    # expert override survives regeneration and is reported
+    r = client.patch(f"/api/p/{pid}/config", json={"expert": {"patches": [
+        {"file": "system/fvSolution", "key_path": "SIMPLE/nNonOrthogonalCorrectors", "value": 2, "stage": "solve"},
+        {"file": "system/fvSolution", "key_path": "nope/missing", "op": "delete", "stage": "solve"}]}})
+    assert r.status_code == 200
+    prev = client.get(f"/api/p/{pid}/expert/preview/solve").json()
+    assert "nNonOrthogonalCorrectors 2;" in prev["files"]["system/fvSolution"]
+    assert prev["overrides"]["applied"] and prev["overrides"]["conflicts"]
+
+
+def test_preview_payload_and_templates(client, tmp_path):
+    from aerobench.viz.payload import unpack
+
+    pid = _project(client, tmp_path)
+    r = client.get(f"/api/p/{pid}/geometry/preview.abg")
+    hdr, arr = unpack(r.content)
+    assert hdr["part_names"][0] == "body" and len(arr["indices"]) % 3 == 0
+    t = client.get("/api/templates").json()
+    assert {x["id"] for x in t} >= {"generic_road_car", "formula_student", "half_car", "full_car_yaw"}
+    r = client.post(f"/api/p/{pid}/presets/template/full_car_yaw")
+    assert r.json()["config"]["tunnel"]["design_yaw_range_deg"] == [-10.0, 10.0]
+
+
+def test_reference_lock_requires_confirmation(client, tmp_path):
+    pid = _project(client, tmp_path)
+    client.patch(f"/api/p/{pid}/config", json={"reference": {"locked": True}})
+    r = client.patch(f"/api/p/{pid}/config", json={"reference": {"area": 2.5}})
+    assert r.status_code == 409 and r.json()["error"]["code"] == "reference.locked"
+    r = client.patch(f"/api/p/{pid}/config", json={"reference": {"area": 2.5, "area_source": "manual", "confirm_after_results": True}})
+    assert r.status_code == 200 and r.json()["config"]["reference"]["area"] == 2.5

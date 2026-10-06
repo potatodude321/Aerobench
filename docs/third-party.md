@@ -29,6 +29,7 @@ distribution reviewed before release.
 | psutil | BSD-3-Clause |
 | Jinja2 | BSD-3-Clause |
 | python-multipart | Apache-2.0 |
+| opentelemetry-api (required by FastAPI) | Apache-2.0 — API only; no SDK or exporter is shipped and it is disabled at start-up (`OTEL_SDK_DISABLED=true`), so nothing is sent anywhere |
 | cadquery-ocp-novtk ("cad" extra; shipped in the Windows installer) | Apache-2.0 bindings to Open CASCADE Technology (LGPL-2.1 with OCCT exception; dynamically loaded) |
 | pytest, httpx, ruff (development only) | MIT / BSD-3-Clause / MIT |
 

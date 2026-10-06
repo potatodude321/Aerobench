@@ -24,6 +24,9 @@ def _free_port() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # FastAPI depends on the OpenTelemetry *API* only (a no-op without an SDK and exporter,
+    # none of which ship).  Disable it explicitly as well: the engine sends nothing anywhere.
+    os.environ.setdefault("OTEL_SDK_DISABLED", "true")
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=0)
     ap.add_argument("--token", default=os.environ.get("AEROBENCH_TOKEN") or "")

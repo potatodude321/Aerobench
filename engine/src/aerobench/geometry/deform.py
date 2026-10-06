@@ -142,7 +142,7 @@ def rbf_solve(d: RBFDef, value: float) -> RBFSolution:
 # --------------------------------------------------------------------------- application
 
 
-def displacement_field(p: GeometryParameter, dv: float):
+def displacement_field(p: GeometryParameter, dv: float, centreline_y: float = 0.0):
     """Callable ``points (n,3) -> displacement (n,3)`` for parameter ``p`` at value offset ``dv``.
 
     With ``symmetric_about_centreline`` the field is symmetrised analytically,
@@ -172,9 +172,10 @@ def displacement_field(p: GeometryParameter, dv: float):
     if not p.symmetric_about_centreline:
         return f
     M = np.array([1.0, -1.0, 1.0])
+    shift = np.array([0.0, 2.0 * centreline_y, 0.0])
 
-    def fs(x: np.ndarray) -> np.ndarray:
-        return 0.5 * (f(x) + f(x * M) * M)
+    def fs(x: np.ndarray) -> np.ndarray:  # mirror about the plane y = centreline_y
+        return 0.5 * (f(x) + f(x * M + shift) * M)
 
     return fs
 
@@ -214,6 +215,7 @@ def apply_parameters(
     wheels: list[Wheel],
     parameters: list[GeometryParameter],
     values: dict[str, float],
+    centreline_y: float = 0.0,
 ) -> DeformResult:
     """Apply all parameters (in definition order) and return the deformed surface.
 
@@ -255,7 +257,7 @@ def apply_parameters(
         for cid, m in masks.items():
             if cid not in aff:
                 keep |= m
-        field_fn = displacement_field(p, dv)
+        field_fn = displacement_field(p, dv, centreline_y)
         d = np.zeros_like(pts)
         d[move] = field_fn(pts[move])
         shared = move & keep
@@ -413,6 +415,8 @@ def _hits_core(tris: np.ndarray, faces: np.ndarray, lo_f: np.ndarray, hi_f: np.n
     hits: set[tuple[int, int]] = set()
     if len(pa) == 0:
         return hits
+    # two triangles intersect iff an edge of either pierces the other: test both directions
+    pa, pb = np.concatenate([pa, pb]), np.concatenate([pb, pa])
     T = tris[pb]
     v0, e1, e2 = T[:, 0], T[:, 1] - T[:, 0], T[:, 2] - T[:, 0]
     scale = float(np.median(np.linalg.norm(e1, axis=1))) or 1.0

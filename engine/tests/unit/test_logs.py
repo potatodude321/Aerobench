@@ -1,10 +1,9 @@
 from pathlib import Path
 
-import numpy as np
 import pytest
 
 from aerobench.foam.logs.classify import STATUS_DLL_NOT_FOUND, classify
-from aerobench.foam.logs.datfiles import DatTail, parse_dat_text, read_series, read_yplus
+from aerobench.foam.logs.datfiles import DatTail, read_series, read_yplus
 from aerobench.foam.logs.mesh_logs import parse_checkmesh, parse_snappy
 from aerobench.foam.logs.solver_log import SolverLogState, parse_solver_log
 
@@ -114,3 +113,21 @@ def test_dat_tail(tmp_path):
         fh.write(" 5\n3 6 7\n")
     assert tail.poll() == [[2.0, 4.0, 5.0], [3.0, 6.0, 7.0]]
     assert tail.columns == ["Time", "a", "b"]
+
+
+def test_dat_merge_drops_truncated_rows_and_abandoned_iterations(tmp_path):
+    from aerobench.foam.logs.datfiles import read_series
+
+    head = "# Force\n# CofR : (0 0 0)\n# Time total_x total_y total_z\n"
+    d0 = tmp_path / "forces" / "0"
+    d0.mkdir(parents=True)
+    rows0 = "".join(f"{i} ({i}.0 0 0)\n" for i in range(1, 1451))
+    (d0 / "force.dat").write_text(head + rows0 + "1451 (1451.0 0")  # killed mid-line at 1451
+    d1 = tmp_path / "forces" / "1000"  # restarted from the last written time 1000
+    d1.mkdir()
+    (d1 / "force.dat").write_text(head + "".join(f"{i} ({i + 0.5} 0 0)\n" for i in range(1001, 1201)))
+    t = read_series(tmp_path / "forces", "force.dat")
+    n = t.numeric()
+    assert n["Time"][-1] == 1200 and len(n["Time"]) == 1200
+    assert n["total_x"][999] == 1000.0 and n["total_x"][1000] == 1001.5
+    assert "total_z" in n

@@ -130,7 +130,7 @@ def project_defaults(name: str = "", e: EngineState = Depends(engine)):
 @router.post("/projects/open")
 def open_project(body: OpenProject, e: EngineState = Depends(engine)):
     p = Project.open(Path(body.path))
-    pid = e.projects.add(p)
+    e.projects.add(p)
     changed = JobManager(p).reconcile()
     if JobManager(p).list(["queued", "starting", "running", "stopping"]):
         ensure_worker_process(p.root)

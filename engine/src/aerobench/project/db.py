@@ -109,12 +109,20 @@ class ProjectDB:
         ph = ", ".join(f":{k}" for k in row)
         self._conn().execute(f"INSERT INTO {table} ({cols}) VALUES ({ph})", row)
 
-    def update(self, table: str, key: str, key_value: Any, changes: dict[str, Any]) -> None:
+    def update(self, table: str, key: str, key_value: Any, changes: dict[str, Any], where_status: Optional[tuple[str, ...]] = None) -> int:
+        """Update one row; with ``where_status`` only if its status is one of those values
+        (compare-and-set against concurrent writers).  Returns the number of rows changed."""
         if not changes:
-            return
+            return 0
         changes = {k: _enc(v, k) for k, v in changes.items()}
         sets = ", ".join(f"{k} = :{k}" for k in changes)
-        self._conn().execute(f"UPDATE {table} SET {sets} WHERE {key} = :__key", {**changes, "__key": key_value})
+        params = {**changes, "__key": key_value}
+        cond = ""
+        if where_status:
+            cond = " AND status IN (%s)" % ", ".join(f":__s{i}" for i in range(len(where_status)))
+            params.update({f"__s{i}": v for i, v in enumerate(where_status)})
+        cur = self._conn().execute(f"UPDATE {table} SET {sets} WHERE {key} = :__key{cond}", params)
+        return cur.rowcount
 
     def log_event(self, event_kind: str, event_ref: Optional[str] = None, **data: Any) -> None:
         self.insert("events", {"t": utc_now_iso(), "kind": event_kind, "ref": event_ref, "data_json": data})

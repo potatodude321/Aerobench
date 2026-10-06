@@ -1,7 +1,10 @@
 """WSL2 provider (advanced/fallback): OpenFOAM inside a WSL distribution.
 
-Cases are *staged* into the distribution's ext4 filesystem (fast, case-sensitive, spaces
-allowed by our own naming) and synchronised back after each step.  All commands go
+Cases are *staged* into the distribution's ext4 filesystem (fast, case-sensitive, a
+shell-safe directory name per host case) and synchronised back at the end of the job, and
+also after a stop or failure so partial results and the latest written time are kept.
+Host-side edits between solver steps and the graceful-stop trigger are mirrored into the
+staged copy (``push_files``/``remove_paths``/``write_file``).  All commands go
 through ``wsl.exe -d <distro> --`` with an explicit ``bash -c`` that sources the
 OpenFOAM bashrc; arguments are shell-quoted.
 """
@@ -14,7 +17,7 @@ from pathlib import Path, PureWindowsPath
 from typing import Any, Optional
 
 from ..core.errors import Diagnostic, ErrorCategory
-from .provider import CommandSpec, ExecutionProvider, MPIInfo, ProviderInfo
+from .provider import CommandSpec, ExecutionProvider, MPIInfo, ProviderInfo, staged_case_key
 
 
 def windows_to_wsl(p: Path | str) -> str:
@@ -87,28 +90,67 @@ class WSLProvider(ExecutionProvider):
                             dynamic_code=True, staging=self.staging, details={"distro": distro, "distros": distros})
 
     def remote_case_dir(self, case_dir: Path) -> str:
-        return f"{self.work_root}/{Path(case_dir).parent.name}/{Path(case_dir).name}"
+        return f"{self.work_root}/{staged_case_key(case_dir)}"
+
+    def _rdir(self, case_dir: Path) -> str:
+        """Shell expression for the remote case directory ($HOME / ~ expanded, rest quoted)."""
+        rel = staged_case_key(case_dir)
+        root = self.work_root.rstrip("/")
+        for prefix in ("$HOME/", "~/"):
+            if root.startswith(prefix):
+                return '"$HOME"/' + shlex.quote(f"{root[len(prefix):]}/{rel}")
+        if root in ("$HOME", "~"):
+            return '"$HOME"/' + shlex.quote(rel)
+        return shlex.quote(f"{root}/{rel}")
+
+    @staticmethod
+    def _rel(relpath: str) -> str:
+        if relpath.startswith(("/", "~")) or ".." in Path(relpath).parts:
+            raise ValueError(f"not a case-relative path: {relpath}")
+        return relpath
 
     def exec_path(self, host_path: Path) -> str:
         return self.remote_case_dir(host_path)
 
     def command(self, app_argv: list[str], case_dir: Path, nprocs: int = 1) -> CommandSpec:
-        rdir = self.remote_case_dir(case_dir)
+        rdir = self._rdir(case_dir)
         app = " ".join(shlex.quote(a) for a in app_argv)
         if nprocs > 1:
             app = f"mpirun -np {int(nprocs)} {app} -parallel"
-        script = f'source {shlex.quote(self.bashrc)} >/dev/null 2>&1 && cd "{rdir}" && exec {app} -case "{rdir}"'
+        script = f"source {shlex.quote(self.bashrc)} >/dev/null 2>&1 && cd {rdir} && exec {app} -case \"$PWD\""
         return CommandSpec(argv=self._wsl(script), cwd=str(case_dir))
 
     def stage_in(self, case_dir: Path) -> CommandSpec:
-        src = windows_to_wsl(case_dir)
-        rdir = self.remote_case_dir(case_dir)
-        script = f'mkdir -p "{rdir}" && cp -a "{src}/." "{rdir}/"'
+        src = shlex.quote(windows_to_wsl(case_dir))
+        rdir = self._rdir(case_dir)
+        # The host copy is authoritative: start from an empty directory so no stale file of a
+        # previous attempt (old time steps, a graceful-stop trigger) survives into this one.
+        script = f"rm -rf -- {rdir} && mkdir -p {rdir} && cp -a {src}/. {rdir}/"
         return CommandSpec(argv=self._wsl(script), cwd=str(case_dir))
 
     def stage_out(self, case_dir: Path) -> CommandSpec:
-        dst = windows_to_wsl(case_dir)
-        rdir = self.remote_case_dir(case_dir)
+        dst = shlex.quote(windows_to_wsl(case_dir))
+        rdir = self._rdir(case_dir)
         # copy back everything except the (large, unchanged) triSurface inputs
-        script = f'cd "{rdir}" && tar --exclude=./constant/triSurface -cf - . | (cd "{dst}" && tar -xf -)'
+        script = f"set -o pipefail; cd {rdir} && tar --exclude=./constant/triSurface -cf - . | (cd {dst} && tar -xf -)"
+        return CommandSpec(argv=self._wsl(script), cwd=str(case_dir))
+
+    def push_files(self, case_dir: Path, relpaths: list[str]) -> CommandSpec:
+        src = windows_to_wsl(case_dir)
+        rdir = self._rdir(case_dir)
+        parts = [f"cp -f {shlex.quote(src + '/' + self._rel(r))} {rdir}/{shlex.quote(self._rel(r))}" for r in relpaths]
+        return CommandSpec(argv=self._wsl(" && ".join(parts)), cwd=str(case_dir))
+
+    def remove_paths(self, case_dir: Path, globs: list[str]) -> CommandSpec:
+        import re
+
+        for g in globs:
+            if not re.fullmatch(r"[A-Za-z0-9_.*-]+", g) or g in (".", ".."):
+                raise ValueError(f"unsafe glob: {g}")
+        rdir = self._rdir(case_dir)
+        return CommandSpec(argv=self._wsl(f"cd {rdir} && rm -rf -- {' '.join(globs)}"), cwd=str(case_dir))
+
+    def write_file(self, case_dir: Path, relpath: str, content: str) -> CommandSpec:
+        rdir = self._rdir(case_dir)
+        script = f"printf %s {shlex.quote(content)} > {rdir}/{shlex.quote(self._rel(relpath))}"
         return CommandSpec(argv=self._wsl(script), cwd=str(case_dir))

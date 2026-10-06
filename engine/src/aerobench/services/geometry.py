@@ -79,7 +79,6 @@ def import_geometry(
 
 def identify_and_derive(project: Project, identify: bool = True) -> dict[str, Any]:
     """(Re)identify components/wheels and refresh summary + reference defaults."""
-    cfg = project.config
     cfd = project.cfd_surface()
     notes: list[str] = []
     if identify:

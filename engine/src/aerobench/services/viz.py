@@ -7,7 +7,7 @@ from typing import Any, Optional
 
 from ..core.errors import AeroBenchError, ErrorCategory
 from ..core.fs import sha256_json
-from ..core.ids import short_id, utc_now_iso
+from ..core.ids import check_id, short_id, utc_now_iso
 from ..domain.project import ProjectConfig
 from ..project.db import dec
 from ..project.store import Project
@@ -80,7 +80,7 @@ class VizService:
     def payload_path(self, project: Project, run_id: str, key: str) -> Path:
         if not key.isalnum():
             raise AeroBenchError.make("visualisation.bad_key", ErrorCategory.VISUALISATION, "Invalid payload key.")
-        p = project.root / "cache" / "viz" / run_id / f"{key}.abg"
+        p = project.root / "cache" / "viz" / check_id(run_id, "run id") / f"{key}.abg"
         if not p.exists():
             raise AeroBenchError.make("visualisation.payload_missing", ErrorCategory.VISUALISATION, "Visualisation payload not found.")
         return p

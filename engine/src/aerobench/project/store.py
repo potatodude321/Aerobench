@@ -12,7 +12,7 @@ import numpy as np
 
 from ..core.errors import AeroBenchError, ErrorCategory
 from ..core.fs import atomic_write_bytes, atomic_write_json, sha256_bytes
-from ..core.ids import short_id, utc_now_iso
+from ..core.ids import check_id, short_id, utc_now_iso
 from ..domain.migrations import migrate
 from ..domain.project import SCHEMA_VERSION, ProjectConfig, stage_hashes
 from ..geometry.pose import place_in_cfd_frame
@@ -30,11 +30,49 @@ def is_project_dir(path: Path) -> bool:
 
 
 class Project:
+    """An open project.
+
+    The engine service and the project worker are separate processes that both read and
+    write ``project.json``.  Every read of :attr:`config` picks up changes written by the
+    other process (cheap mtime check), and :meth:`update` performs its read-modify-write
+    under an inter-process lock on the freshest copy, so neither process can overwrite the
+    other's edits with a stale configuration.
+    """
+
     def __init__(self, root: Path, config: ProjectConfig, db: ProjectDB):
         self.root = Path(root)
-        self.config = config
+        self._config = config
+        self._mtime_ns: Optional[tuple[int, int]] = self._stat_mtime()
         self.db = db
         self._surface_cache: dict[str, TriSurface] = {}
+
+    # ------------------------------------------------------------------ configuration (multi-process safe)
+    def _stat_mtime(self) -> Optional[tuple[int, int]]:
+        try:
+            st = (self.root / PROJECT_FILE).stat()
+            return (st.st_mtime_ns, st.st_size)
+        except OSError:
+            return None
+
+    def _reload_if_changed(self, force: bool = False) -> None:
+        m = self._stat_mtime()
+        if m is None or (m == self._mtime_ns and not force):
+            return
+        try:
+            raw = json.loads((self.root / PROJECT_FILE).read_text(encoding="utf-8"))
+            self._config = ProjectConfig.model_validate(migrate(raw))
+            self._mtime_ns = m
+        except Exception:  # noqa: BLE001 - keep the last good configuration; the next write repairs the file
+            pass
+
+    @property
+    def config(self) -> ProjectConfig:
+        self._reload_if_changed()
+        return self._config
+
+    @config.setter
+    def config(self, value: ProjectConfig) -> None:
+        self._config = value
 
     # ------------------------------------------------------------------ lifecycle
     @classmethod
@@ -94,9 +132,10 @@ class Project:
         return snaps[-1] if snaps else None
 
     def save(self, snapshot: bool = True) -> None:
-        self.config.touch()
-        data = self.config.to_json()
+        self._config.touch()
+        data = self._config.to_json()
         atomic_write_json(self.root / PROJECT_FILE, data)
+        self._mtime_ns = self._stat_mtime()
         if snapshot:
             stamp = utc_now_iso().replace(":", "").replace("-", "")
             atomic_write_json(self.root / ".autosave" / f"project-{stamp}.json", data)
@@ -105,25 +144,38 @@ class Project:
                 old.unlink(missing_ok=True)
 
     def update(self, fn: Callable[[ProjectConfig], None], snapshot: bool = True) -> ProjectConfig:
-        """Apply a mutation atomically (validated by constructing a new model)."""
-        new = self.config.model_copy(deep=True)
-        fn(new)
-        self.config = ProjectConfig.model_validate(new.model_dump(mode="json"))
-        self.save(snapshot=snapshot)
-        return self.config
+        """Apply a mutation atomically to the freshest configuration (validated by
+        constructing a new model) under the inter-process project lock."""
+        def mutate(cfg: ProjectConfig) -> ProjectConfig:
+            new = cfg.model_copy(deep=True)
+            fn(new)
+            return new
+
+        return self.transform(mutate, snapshot=snapshot)
+
+    def transform(self, fn: Callable[[ProjectConfig], ProjectConfig], snapshot: bool = True) -> ProjectConfig:
+        """Replace the configuration by ``fn(fresh_config)`` under the inter-process lock."""
+        from ..core.filelock import file_lock
+
+        with file_lock(self.root / ".project.lock"):
+            self._reload_if_changed(force=True)  # timestamps can be too coarse to see a just-written change
+            new = fn(self._config.model_copy(deep=True))
+            self._config = ProjectConfig.model_validate(new.model_dump(mode="json"))
+            self.save(snapshot=snapshot)
+        return self._config
 
     # ------------------------------------------------------------------ paths
     def mesh_dir(self, mesh_id: str) -> Path:
-        return self.root / "meshes" / mesh_id
+        return self.root / "meshes" / check_id(mesh_id, "mesh id")
 
     def run_dir(self, run_id: str) -> Path:
-        return self.root / "runs" / run_id
+        return self.root / "runs" / check_id(run_id, "run id")
 
     def job_dir(self, job_id: str) -> Path:
-        return self.root / "jobs" / job_id
+        return self.root / "jobs" / check_id(job_id, "job id")
 
     def cache_dir(self, *parts: str) -> Path:
-        p = self.root.joinpath("cache", *parts)
+        p = self.root.joinpath("cache", *(check_id(x, "cache key") for x in parts))
         p.mkdir(parents=True, exist_ok=True)
         return p
 

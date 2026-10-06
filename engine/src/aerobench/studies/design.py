@@ -71,6 +71,7 @@ def _cache_key(base_rev: str, transform: GeometryTransform, cfg: ProjectConfig, 
         "base": base_rev, "transform": transform.model_dump(mode="json"),
         "components": [c.model_dump(mode="json") for c in cfg.geometry.components],
         "wheels": [w.model_dump(mode="json") for w in cfg.vehicle.wheels],
+        "centreline_y": cfg.vehicle.centreline_y,
         "parameters": [p.model_dump(mode="json") for p in cfg.parameters if p.id in values],
         "values": {k: round(float(v), 12) for k, v in sorted(values.items())},
     }
@@ -140,7 +141,7 @@ def build_design(project: Project, base_cfg: ProjectConfig, assignments: dict[st
             else:
                 cfd, _ = place_in_cfd_frame(project.raw_surface(src_rev), transform)
                 try:
-                    res = apply_parameters(cfd, cfg.geometry.components, cfg.vehicle.wheels, cfg.parameters, full)
+                    res = apply_parameters(cfd, cfg.geometry.components, cfg.vehicle.wheels, cfg.parameters, full, cfg.vehicle.centreline_y)
                 except ValueError as exc:
                     out.errors.append({"code": "geometry.parameter_invalid", "message": str(exc)})
                     return out

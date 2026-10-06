@@ -257,3 +257,32 @@ def test_mesh_sensitivity_study_reports_gci(env, monkeypatch):
     g = svc.detail(p, sid)["summary"]["gci"]["results"]
     assert g["Cd"]["status"] == "monotonic" and g["Cd"]["order"] == pytest.approx(2.0, abs=1e-6)
     assert g["Cd"]["extrapolated"] == pytest.approx(0.30, abs=1e-9)
+
+
+def test_optimisation_recovers_from_stale_checkpoint_and_orphan_tokens(env):
+    """Worker killed mid-tick: the optimiser state on disk is older than the designs table,
+    or a point was asked/checkpointed but its design row never written."""
+    p, ctx, calls = env
+    defn = {"id": "crash", "name": "Crash", "algorithm": "gp_bo", "budget": 8, "seed": 3, "initial_samples": 3,
+            "variables": [{"id": "rh", "target": "vehicle.ride_height_offset", "lower": -0.02, "upper": 0.03}],
+            "objectives": [{"metric": "Cd"}], "scheduling": {"concurrency": 2}}
+    sid = svc.start(p, ctx, "optimisation", defn, launch_worker=False)["id"]
+    drive_all(p, ctx)
+    old_state = p.db.one("SELECT state_json FROM optimiser_state WHERE study_id = ?", (sid,))["state_json"]
+    drive(p, ctx, rounds=3)
+    # roll the optimiser back (crash before checkpoint) ...
+    p.db.execute("UPDATE optimiser_state SET state_json = ? WHERE study_id = ?", (old_state, sid))
+    # ... and drop the newest design row (crash after the checkpoint, before the insert)
+    newest = p.db.one("SELECT id FROM designs WHERE study_id = ? ORDER BY idx DESC LIMIT 1", (sid,))
+    p.db.execute("DELETE FROM designs WHERE id = ?", (newest["id"],))
+    drive(p, ctx, rounds=60)
+    d = svc.detail(p, sid)
+    assert d["status"] == "completed", d["status"]
+    st = dec(p.db.one("SELECT state_json FROM optimiser_state WHERE study_id = ?", (sid,)))["state"]
+    assert not st["pending"]
+    tokens = [x["token"] for x in d["designs"] if x.get("token")]
+    assert len(tokens) == len(set(tokens)), "a token must never be reused for a different design"
+    obs = {o["token"]: o for o in st["observations"]}
+    for x in d["designs"]:
+        if x.get("token") and x["status"] == "completed":
+            assert x["token"] in obs and obs[x["token"]]["x"] == pytest.approx(x["unit"])

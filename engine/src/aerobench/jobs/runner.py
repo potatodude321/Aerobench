@@ -44,6 +44,8 @@ from .spec import (
 POLL = 0.5
 HEARTBEAT = 5.0
 GRACE_STOP_SECONDS = 600  # graceful stop: wait for the solver to write and exit
+MIRROR_TIMEOUT = 120  # mirroring a small edit/trigger into a staged copy
+SALVAGE_TIMEOUT = 4 * 3600  # copying a staged case back after a stop/failure
 
 
 class Runner:
@@ -60,6 +62,14 @@ class Runner:
                 self.state.steps[i] = st
         (self.job_dir / "logs").mkdir(exist_ok=True)
         self._last_hb = 0.0
+        # Staged providers (WSL, remote) run applications on a copy of the case.  While that
+        # copy is "live" (staged in, not yet staged out) host-side edits must be mirrored into
+        # it, and it must be copied back however the job ends.
+        self._staged_live = False
+        if self.provider.staging == "staged":
+            for st_def, st_state in zip(self.spec.steps[: self.spec.resume_from_step], self.state.steps):
+                if isinstance(st_def, StageStep) and st_state.status == "completed":
+                    self._staged_live = st_def.direction == "in"
 
     # ----------------------------------------------------------------- state & events
     def save(self) -> None:
@@ -93,15 +103,18 @@ class Runner:
                 step = self.spec.steps[i]
                 req = self.control()
                 if req in ("stop", "kill"):
+                    self._salvage("stopped")
                     self._finish(JobStatus.STOPPED, f"Stopped before step '{step.name}'.")
                     return 0
                 self.state.step_index = i
                 ok = self._run_step(i, step)
                 if self.state.status in (JobStatus.STOPPED, JobStatus.STOPPING):
                     how = "forced" if self.state.stop_requested == "kill" else "graceful (latest state written)"
+                    self._salvage("stopped")
                     self._finish(JobStatus.STOPPED, f"Stopped by request during '{step.name}' — {how}.")
                     return 0
                 if not ok and not step.optional:
+                    self._salvage("failed")
                     self._finish(JobStatus.FAILED, f"Step '{step.name}' failed.")
                     return 1
             self._finish(JobStatus.COMPLETED, "Completed.")
@@ -109,8 +122,80 @@ class Runner:
         except Exception as exc:  # noqa: BLE001
             self.state.diagnostics.append(Diagnostic(code="internal.runner", category=ErrorCategory.INTERNAL,
                                                      summary="The job runner failed unexpectedly.", details=traceback.format_exc()))
+            try:
+                self._salvage("failed")
+            except Exception:  # noqa: BLE001
+                pass
             self._finish(JobStatus.FAILED, f"Runner error: {exc}")
             return 2
+
+    # ----------------------------------------------------------------- staged copies
+    def _plain(self, argv: list[str], env: dict, cwd: str, log: Path, timeout: float) -> int:
+        """Run a short helper command to completion, ignoring stop requests (used for
+        mirroring and salvage, which must not be interrupted half-way)."""
+        with open(log, "ab") as fh:
+            fh.write(f"# aerobench: {utc_now_iso()} :: {' '.join(argv)}\n".encode())
+            fh.flush()
+            try:
+                proc = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=fh, stderr=subprocess.STDOUT,
+                                        **popen_kwargs(detached=False))
+            except OSError as exc:
+                fh.write(f"# aerobench: could not start: {exc}\n".encode())
+                return 127
+        self.state.child_pid = proc.pid
+        self.state.child_create_time = create_time(proc.pid)
+        self.save()
+        deadline = time.time() + timeout
+        while proc.poll() is None:
+            if time.time() > deadline:
+                kill_tree(proc.pid, graceful=False)
+                proc.wait()
+                break
+            if time.time() - self._last_hb > HEARTBEAT:
+                self._last_hb = time.time()
+                self.save()
+            time.sleep(min(POLL, 0.1))
+        self.state.child_pid = None
+        self.save()
+        return proc.returncode if proc.returncode is not None else -9
+
+    def _mirror(self, spec, i: int, st: StepState, what: str) -> bool:
+        """Apply a host-side change to the live staged copy (no-op for in-place providers)."""
+        if not self._staged_live or spec is None:
+            return True
+        log = self.job_dir / "logs" / f"{i:02d}-{st.name}.log"
+        st.log = str(log.relative_to(self.job_dir))
+        st.command = spec.argv
+        rc = self._plain(spec.argv, {**os.environ, **spec.env}, spec.cwd or str(self.case_dir), log, MIRROR_TIMEOUT)
+        self.event("staged_mirror", step=st.name, what=what, exit_code=rc)
+        if rc != 0:
+            st.diagnostics.append(Diagnostic(code="environment.staging_failed", category=ErrorCategory.ENVIRONMENT,
+                                             summary=f"Could not apply '{st.name}' to the staged copy of the case.",
+                                             details=f"exit code {rc}; see {st.log}"))
+        st.exit_code = rc
+        return rc == 0
+
+    def _salvage(self, why: str) -> None:
+        """Copy a live staged case back to the host after a stop or failure, so the latest
+        written time (needed to resume) and partial results/logs are not stranded."""
+        if not self._staged_live:
+            return
+        spec = self.provider.stage_out(self.case_dir)
+        if spec is None:
+            self._staged_live = False
+            return
+        log = self.job_dir / "logs" / "salvage-stage_out.log"
+        self.event("staged_salvage_started", reason=why)
+        rc = self._plain(spec.argv, {**os.environ, **spec.env}, spec.cwd or str(self.case_dir), log, SALVAGE_TIMEOUT)
+        self.event("staged_salvage_finished", reason=why, exit_code=rc)
+        if rc == 0:
+            self._staged_live = False
+        else:
+            self.state.diagnostics.append(Diagnostic(
+                code="environment.staging_failed", category=ErrorCategory.ENVIRONMENT,
+                summary="The staged copy of the case could not be copied back after the job ended.",
+                details=f"exit code {rc}; see logs/salvage-stage_out.log",
+                action="The data is still in the staged copy; retry by resuming the run or copy it manually."))
 
     def _finish(self, status: JobStatus, msg: str) -> None:
         self.state.status = status
@@ -131,7 +216,7 @@ class Runner:
                 ok = self._foam(i, step, st)
             elif isinstance(step, CopyStep):
                 shutil.copyfile(self.case_dir / step.src, self.case_dir / step.dst)
-                ok = True
+                ok = self._mirror(self.provider.push_files(self.case_dir, [step.dst]) if self._staged_live else None, i, st, step.dst)
             elif isinstance(step, RemoveStep):
                 for pat in step.globs:
                     for p in glob.glob(str(self.case_dir / pat)):
@@ -139,7 +224,8 @@ class Runner:
                         if self.case_dir.resolve() not in pp.parents:
                             raise RuntimeError(f"refusing to remove outside the case: {pp}")
                         shutil.rmtree(pp) if pp.is_dir() else pp.unlink()
-                ok = True
+                ok = self._mirror(self.provider.remove_paths(self.case_dir, step.globs) if self._staged_live else None, i, st,
+                                  " ".join(step.globs))
             elif isinstance(step, DictSetStep):
                 from ..foam.ast import from_json
                 from ..foam.parser import parse, strip_header
@@ -150,7 +236,7 @@ class Runner:
                 body.set_path(step.key_path, from_json(step.value))
                 obj = hdr.get("object").value if hdr is not None and hdr.get("object") is not None else path.name
                 atomic_write_text(path, write_foam_file(body, obj, location=str(Path(step.file).parent)))
-                ok = True
+                ok = self._mirror(self.provider.push_files(self.case_dir, [step.file]) if self._staged_live else None, i, st, step.file)
             elif isinstance(step, LinkMeshStep):
                 from ..core.fs import link_or_copy
 
@@ -177,6 +263,12 @@ class Runner:
                     rc = self._exec(spec.argv, {**os.environ, **spec.env}, spec.cwd or str(self.case_dir), log, solver=False)
                     st.exit_code = rc
                     ok = rc == 0
+                if step.direction == "in":
+                    # Only a complete stage-in is live: nothing has run on a failed (possibly
+                    # truncated) copy, and copying it back could damage the host case.
+                    self._staged_live = ok and spec is not None
+                elif ok:
+                    self._staged_live = False
             else:
                 raise RuntimeError(f"unknown step type {type(step)}")
         except Exception as exc:  # noqa: BLE001
@@ -221,6 +313,18 @@ class Runner:
             self.state.diagnostics.extend(diags)
         return ok
 
+    def _trigger_staged(self) -> bool:
+        """Write the graceful-stop trigger into the staged copy the solver is reading."""
+        spec = self.provider.write_file(self.case_dir, STOP_FO_NAME, "action=writeNow\n")
+        if spec is None:
+            return True
+        try:
+            out = subprocess.run(spec.argv, cwd=spec.cwd or str(self.case_dir), env={**os.environ, **spec.env},
+                                 stdin=subprocess.DEVNULL, capture_output=True, timeout=MIRROR_TIMEOUT)
+            return out.returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+
     def _exec(self, argv: list[str], env: dict, cwd: str, log: Path, solver: bool) -> int:
         with open(log, "ab") as fh:
             fh.write(f"# aerobench: {utc_now_iso()} :: {' '.join(argv)}\n".encode())
@@ -251,7 +355,11 @@ class Runner:
                 if solver:
                     # OpenFOAM abort function object: stop and write the current state
                     atomic_write_text(self.case_dir / STOP_FO_NAME, "action=writeNow\n")
-                    self.event("graceful_stop_requested", mechanism="abort function object")
+                    if self._staged_live and not self._trigger_staged():
+                        self.event("graceful_stop_unavailable", mechanism="terminate")
+                        kill_tree(proc.pid, graceful=True)
+                    else:
+                        self.event("graceful_stop_requested", mechanism="abort function object")
                 else:
                     self.event("stop_requested", mechanism="terminate")
                     kill_tree(proc.pid, graceful=True)

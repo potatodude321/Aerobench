@@ -23,3 +23,15 @@ def utc_now() -> _dt.datetime:
 
 def utc_now_iso() -> str:
     return utc_now().isoformat(timespec="seconds")
+
+
+_ID_RE = __import__("re").compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+
+
+def check_id(value: str, what: str = "identifier") -> str:
+    """Validate an id that becomes part of a file path (run, job, mesh, study, report ids)."""
+    if not isinstance(value, str) or not _ID_RE.match(value):
+        from .errors import AeroBenchError, ErrorCategory
+
+        raise AeroBenchError.make("request.bad_id", ErrorCategory.PROJECT, f"Invalid {what}.")
+    return value

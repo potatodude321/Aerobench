@@ -38,7 +38,19 @@ A provider interface (`aerobench.execution.provider.ExecutionProvider`) with:
 * `staging` mode: `in_place` (Native Windows, Local POSIX) or `staged` (WSL, Remote).
   Staged providers copy the case into a provider-local working directory (WSL ext4 or
   remote scratch), run there, and synchronise results back. This avoids 9P slowness and
-  the space-in-path restriction, and is the same model remote/HPC needs.
+  the space-in-path restriction, and is the same model remote/HPC needs. Contract:
+  * the host copy is authoritative: `stage_in` replaces the staged directory with a clean
+    copy (no stale time steps or stop triggers survive from an earlier attempt); the
+    staged directory is `<work_root>/<parent>/<case>-<hash of host path>` — shell-safe and
+    never shared by two host cases;
+  * while the copy is live, host-side edits between solver steps (scheme switch, endTime,
+    clean-up) are mirrored with `push_files`/`remove_paths`, and a graceful stop writes the
+    trigger into the copy (`write_file`; if that fails the solver is terminated instead);
+  * applications (e.g. `decomposePar` on resume) only run after `stage_in`;
+  * after a stop, a failure or a runner error the copy is copied back (*salvage*) so the
+    latest written time and partial results are kept; a failed stage-in is never copied
+    back. If a machine dies mid-run, progress since the last copy-back is lost and a resume
+    restarts from the host copy.
 * Capability flags: `dynamic_code`, `parallel`, `mpi_launcher`.
 
 Implementations: `native-windows` (default on Windows), `local-posix` (Linux/macOS,

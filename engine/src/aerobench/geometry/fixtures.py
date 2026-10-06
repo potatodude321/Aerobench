@@ -42,7 +42,7 @@ def _loft(rings: np.ndarray, cap_start: str = "fan", cap_end: str = "fan") -> tu
     faces = np.vstack(faces)
     extra = []
     n = len(pts)
-    for cap, ring_idx, rev in ((cap_start, 0, True), (cap_end, K - 1, False)):
+    for _cap, ring_idx, rev in ((cap_start, 0, True), (cap_end, K - 1, False)):
         idx = ring_idx * M + np.arange(M)
         centre = rings[ring_idx].mean(axis=0)
         extra.append(centre)
@@ -98,7 +98,6 @@ def _rect_cap(y0, y1, z0, z1, n_y, n_z, x, ring_offset: int, flip: bool) -> tupl
         idx[0, j] = ring_offset + k; k += 1
     assert k == M
     interior = []
-    base = None
     for i in range(1, n_y):
         for j in range(1, n_z):
             interior.append([x, ys[i], zs[j]])
@@ -211,7 +210,6 @@ def ahmed_body(slant_deg: float = 25.0, n_front: int = 16, n_y: int = 24, n_z: i
     L, W, H, R, ls, c = A["length"], A["width"], A["height"], A["front_radius"], A["slant_length"], A["clearance"]
     phi = math.radians(slant_deg)
     x_slant = L - ls * math.cos(phi)
-    drop = ls * math.sin(phi)
     # stations: dense cosine-spaced through the front radius, then key x positions
     s = (1 - np.cos(np.linspace(0, math.pi / 2, n_front + 1)))  # 0..1
     xf = R * s

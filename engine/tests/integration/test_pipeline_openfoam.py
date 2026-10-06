@@ -3,20 +3,13 @@
 Runs the genuine chain (no mocks) on a coarse synthetic car.  ~2–4 minutes on 2 cores.
 """
 
-import json
-import math
 
 import pytest
 
-from aerobench.domain.setup import FarfieldBC
-from aerobench.geometry.fixtures import generic_car
-from aerobench.geometry.io import write_stl
 from aerobench.jobs.manager import JobManager
-from aerobench.jobs.worker import Worker
 from aerobench.project.store import Project
-from aerobench.services import geometry as geo
 from aerobench.services.mesh import mesh_record
-from aerobench.services.runs import ingest_run, prepare_run, reproduce_run, run_record
+from aerobench.services.runs import ingest_run, run_record
 
 
 pytestmark = [pytest.mark.openfoam, pytest.mark.slow]

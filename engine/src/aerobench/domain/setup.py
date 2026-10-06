@@ -58,7 +58,8 @@ class ReferenceValues(Model):
     area_computed_resolution: Optional[float] = Field(None, description="Pixel size used (m)")
     length: Optional[float] = Field(None, gt=0, description="Reference length (m); default = wheelbase or vehicle length")
     length_source: str = "wheelbase"
-    density: float = Field(1.204, gt=0, description="Reference density (kg/m³) used to dimensionalise kinematic pressure")
+    density: float = Field(1.204, gt=0, description="Mirrors the fluid density (kg/m³): forces are written with the fluid "
+                           "density and coefficients always use that same value")
     velocity: Optional[float] = Field(None, gt=0, description="Reference velocity (m/s); None = operating speed")
     moment_centre: Optional[Vec3] = None
     moment_centre_source: MomentCentreSource = MomentCentreSource.WHEELBASE_MID_GROUND

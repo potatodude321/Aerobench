@@ -4,10 +4,10 @@ import numpy as np
 import pytest
 
 from aerobench.domain.geometry import AxisDir, ComponentRole, GeometryTransform, WheelPosition
-from aerobench.domain.vehicle import VehicleConfig, Wheel
+from aerobench.domain.vehicle import VehicleConfig
 from aerobench.geometry import repair
 from aerobench.geometry.components import identify_components, role_from_name, wheel_position_from_name
-from aerobench.geometry.fixtures import AHMED, ahmed_body, box, cylinder, generic_car, sphere
+from aerobench.geometry.fixtures import ahmed_body, box, generic_car, sphere
 from aerobench.geometry.frontal_area import projected_area
 from aerobench.geometry.inspect import inspect_surface, suggest_units
 from aerobench.geometry.io import read_obj, read_ply, read_stl, write_obj, write_stl

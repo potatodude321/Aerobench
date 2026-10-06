@@ -27,7 +27,10 @@ def solve_hash(cfg: ProjectConfig) -> str:
 
 
 def solve_steps(cfg: ProjectConfig, adapter, mesh_dir: Path, nprocs: int, staged: bool, n_first: int,
-                resume: bool = False) -> list:
+                resume: bool = False, decompose_latest: bool = False) -> list:
+    """Job steps of a solve.  Host-side edits placed *before* ``stage_in`` reach a staged
+    copy through the stage-in itself; anything that runs an application (decomposePar)
+    must come after it, because applications of staged providers run on the copy."""
     solver = adapter.steady_solver_argv()
     steps: list = []
     if not resume:
@@ -38,6 +41,8 @@ def solve_steps(cfg: ProjectConfig, adapter, mesh_dir: Path, nprocs: int, staged
     if par and not resume:
         steps.append(RemoveStep(name="clean_processors", globs=["processor*"]))
         steps.append(FoamStep(name="decomposePar", app=["decomposePar", "-force"], stage="solve"))
+    if par and resume and decompose_latest:
+        steps.append(FoamStep(name="decomposePar", app=["decomposePar", "-force", "-latestTime"], stage="solve"))
     if cfg.numerics.potential_init and not resume:
         steps.append(FoamStep(name="potentialFoam", app=adapter.potential_init_argv(), nprocs=nprocs, optional=True, stage="solve"))
     total = cfg.numerics.iterations
@@ -214,9 +219,8 @@ def resume_run(project: Project, ctx: AppContext, run_id: str, extra_iterations:
     steps: list = [CopyStep(name="schemes_final", src="system/fvSchemes.final", dst="system/fvSchemes", optional=True),
                    DictSetStep(name="end_time", file="system/controlDict", key_path="endTime", value=target),
                    RemoveStep(name="clear_stop_trigger", globs=["aerobenchStop"])]
-    if n > 1 and not proc_times:
-        steps.append(FoamStep(name="decomposePar", app=["decomposePar", "-force", "-latestTime"], stage="solve"))
-    steps += [s for s in solve_steps(cfg, adapter, rdir, n, provider.staging == "staged", 0, resume=True)]
+    steps += solve_steps(cfg, adapter, rdir, n, provider.staging == "staged", 0, resume=True,
+                         decompose_latest=n > 1 and not proc_times)
     jm = JobManager(project)
     job_id = jm.create("solve", rdir, steps, provider.serialise(), cores=n, target_kind="run", target_id=run_id,
                        meta={"resume": True, "iterations": target})

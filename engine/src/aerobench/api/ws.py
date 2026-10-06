@@ -37,7 +37,12 @@ async def events(ws: WebSocket):
                     subs["project"] = data["pid"]
                     subs["jobs_sig"] = None
                 elif data.get("type") == "subscribe_log":
-                    subs["logs"][data["job_id"]] = {"offset": -1, "step": None}
+                    from ..core.ids import check_id
+
+                    try:
+                        subs["logs"][check_id(str(data.get("job_id")), "job id")] = {"offset": -1, "step": None}
+                    except Exception:  # noqa: BLE001 - ignore malformed subscriptions
+                        pass
                 elif data.get("type") == "unsubscribe_log":
                     subs["logs"].pop(data["job_id"], None)
             except asyncio.TimeoutError:
@@ -50,8 +55,8 @@ async def events(ws: WebSocket):
             except Exception:  # noqa: BLE001
                 continue
             jm = JobManager(p)
-            rows = await asyncio.to_thread(lambda: [dict(r) for r in jm.list(["queued", "starting", "running", "stopping"])])
-            recent = await asyncio.to_thread(lambda: p.db.all("SELECT id, status, ended_at FROM jobs ORDER BY created_at DESC LIMIT 20"))
+            rows = await asyncio.to_thread(lambda jm=jm: [dict(r) for r in jm.list(["queued", "starting", "running", "stopping"])])
+            recent = await asyncio.to_thread(lambda p=p: p.db.all("SELECT id, status, ended_at FROM jobs ORDER BY created_at DESC LIMIT 20"))
             sig = json.dumps([(r["id"], r["status"]) for r in rows] + [(r["id"], r["status"]) for r in recent])
             if sig != subs["jobs_sig"]:
                 subs["jobs_sig"] = sig

@@ -273,7 +273,7 @@ def op_surface(p):
     names = []
     per_part = p.get("per_part", True)
     groups = [[x] for x in patches] if per_part else [patches]
-    for gi, grp in enumerate(groups):
+    for grp in groups:
         pts, tri, pd, ratio, vals, _ = _surface_extract(grp, p["field"], p.get("component", "Magnitude"),
                                                       max(2000, int(p.get("max_faces", 400000) / max(1, len(groups)))))
         if len(tri) == 0:

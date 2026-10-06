@@ -36,7 +36,12 @@ def _cofr_from_file(path: Path) -> Optional[tuple[float, float, float]]:
     return None
 
 
-def load_force_history(case_dir: Path, fo_name: str = "forces_total") -> Optional[ForceHistory]:
+def load_force_history(case_dir: Path, fo_name: str = "forces_total",
+                       default_cofr: Optional[tuple[float, float, float]] = None) -> Optional[ForceHistory]:
+    """Force/moment history of a ``forces`` function object.  Moments are about the CofR in
+    the file header; if the header lacks it (other forks/versions), ``default_cofr`` — the
+    moment centre the case was generated with — is used instead of silently assuming the
+    origin."""
     d = Path(case_dir) / "postProcessing" / fo_name
     f = read_series(d, "force.dat")
     m = read_series(d, "moment.dat")
@@ -53,7 +58,11 @@ def load_force_history(case_dir: Path, fo_name: str = "forces_total") -> Optiona
         V = np.column_stack([fn["viscous_x"], fn["viscous_y"], fn["viscous_z"]])[i_f]
     first = sorted((d).glob("*/force.dat"))
     cofr = _cofr_from_file(first[0]) if first else None
-    return ForceHistory(common, F, M, cofr or (0.0, 0.0, 0.0), P, V)
+    if cofr is None:
+        if default_cofr is None:
+            return None  # moments would be about an unknown point
+        cofr = tuple(float(v) for v in default_cofr)  # type: ignore[assignment]
+    return ForceHistory(common, F, M, cofr, P, V)
 
 
 def reference_spec(cfg: ProjectConfig, ground_z: float) -> ReferenceSpec:
@@ -61,7 +70,8 @@ def reference_spec(cfg: ProjectConfig, ground_z: float) -> ReferenceSpec:
     return ReferenceSpec(
         area=float(r.area or math.nan),
         length=float(r.length or math.nan),
-        density=float(r.density),
+        # forces are written with rhoInf = fluid density; the coefficients must use the same value
+        density=float(cfg.physics.fluid.density),
         velocity=float(r.velocity or cfg.operating.speed),
         moment_centre=tuple(r.moment_centre or (0.0, 0.0, ground_z)),
         axes=r.axes.value,
@@ -94,7 +104,7 @@ def window_mean_result(h: ForceHistory, ref: ReferenceSpec, fraction: float) -> 
 def component_breakdown(case_dir: Path, cfg: ProjectConfig, ref: ReferenceSpec, fraction: float) -> dict[str, dict[str, Any]]:
     out = {}
     for c in cfg.geometry.components:
-        h = load_force_history(case_dir, f"forces_{c.id}")
+        h = load_force_history(case_dir, f"forces_{c.id}", ref.moment_centre)
         if h is None or len(h.time) == 0:
             continue
         r, _ = window_mean_result(h, ref, fraction)
@@ -124,7 +134,7 @@ def ingest_run_results(case_dir: Path, cfg: ProjectConfig, ground_z: float, expe
                        nan_detected: bool = False) -> dict[str, Any]:
     """Compute everything the results dashboard needs from a completed (or partial) run."""
     ref = reference_spec(cfg, ground_z)
-    h = load_force_history(case_dir)
+    h = load_force_history(case_dir, default_cofr=ref.moment_centre)
     out: dict[str, Any] = {"reference": {"area": ref.area, "length": ref.length, "density": ref.density, "velocity": ref.velocity,
                                          "moment_centre": list(ref.moment_centre), "axes": ref.axes, "wheelbase": ref.wheelbase,
                                          "axle_reference": list(ref.axle_reference) if ref.axle_reference else None,
@@ -152,10 +162,14 @@ def ingest_run_results(case_dir: Path, cfg: ProjectConfig, ground_z: float, expe
     yplus = read_yplus(Path(case_dir) / "postProcessing" / "yPlus")
     pv = None
     if h.pressure_force is not None:
+        from ..aero.forces import _axes
+
         Fp = h.pressure_force[sl].mean(axis=0)
         Fv = h.viscous_force[sl].mean(axis=0)
+        dd, _, _ = _axes(ref.axes, ref.yaw_deg)  # same drag axis and half-model factor as the total Cd
+        k = 2.0 if ref.half_model else 1.0
         q_a = ref.q * ref.area
-        pv = {"Cd_pressure": float(Fp[0] / q_a), "Cd_viscous": float(Fv[0] / q_a)}
+        pv = {"Cd_pressure": float(k * (Fp @ dd) / q_a), "Cd_viscous": float(k * (Fv @ dd) / q_a)}
     out.update({
         "available": True,
         "iterations": int(h.time[-1]),
@@ -175,7 +189,7 @@ def series_payload(case_dir: Path, cfg: ProjectConfig, ground_z: float, max_poin
     """Time series for plots (decimated uniformly when long)."""
     ref = reference_spec(cfg, ground_z)
     out: dict[str, Any] = {}
-    h = load_force_history(case_dir)
+    h = load_force_history(case_dir, default_cofr=ref.moment_centre)
     if h is not None and len(h.time):
         s = coefficient_series(h, ref)
         idx = _decimate_idx(len(h.time), max_points)

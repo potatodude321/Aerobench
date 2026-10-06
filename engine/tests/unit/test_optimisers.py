@@ -143,3 +143,16 @@ def test_projector_snaps_to_grid():
     o.projector = lambda x: np.round(x * 4) / 4
     run(o, lambda x: (x[0] - 0.5) ** 2)
     assert all(abs(ob.x[0] * 4 - round(ob.x[0] * 4)) < 1e-12 for ob in o.observations)
+
+
+def test_nelder_mead_failures_keep_state_json_and_reuse_pending_baseline():
+    o = create("nelder_mead", dim=2, budget=20, x0=[0.5, 0.5])
+    o.pending["baseline"] = [0.5, 0.5]  # registered by the driver before the baseline runs
+    asked = o.ask(4)
+    assert all(abs(x[0] - 0.5) + abs(x[1] - 0.5) > 1e-9 for _, x in asked), "baseline vertex must not be asked twice"
+    o.tell(asked[0][0], failed=True)
+    json.dumps(o.state(), allow_nan=False)  # failures must not put inf/nan into the checkpoint
+    o.tell("baseline", [1.0], x=[0.5, 0.5])
+    for tok, x in asked[1:]:
+        o.tell(tok, [x[0] + x[1]])
+    assert len(o.simplex) == 3 and o.phase == "reflect"

@@ -26,11 +26,21 @@ class DatTable:
         i = self.columns.index(name)
         return np.array([r[i] if i < len(r) else math.nan for r in self.rows], dtype=float)
 
+    def complete_rows(self) -> list[list]:
+        """Rows with one value per column (drops a truncated last line of a file being
+        written or of a killed run)."""
+        n = len(self.columns)
+        return [r for r in self.rows if len(r) == n] if n else list(self.rows)
+
     def numeric(self) -> dict[str, np.ndarray]:
+        """Numeric columns over complete rows; a column with any non-numeric entry (e.g.
+        patch names) is left out."""
+        rows = self.complete_rows()
+        rows = [r for r in rows if isinstance(r[0], float)]
         out = {}
         for i, c in enumerate(self.columns):
             try:
-                out[c] = np.array([float(r[i]) for r in self.rows], dtype=float)
+                out[c] = np.array([float(r[i]) for r in rows], dtype=float)
             except (ValueError, TypeError, IndexError):
                 continue
         return out
@@ -98,10 +108,17 @@ def time_dirs(fo_dir: Path) -> list[Path]:
 
 
 def read_series(fo_dir: Path, filename: str) -> Optional[DatTable]:
-    """Merge ``<fo_dir>/<t>/<filename>`` (and ``<stem>_N.dat`` variants) in time order."""
+    """Merge ``<fo_dir>/<t>/<filename>`` (and ``<stem>_N.dat`` variants) in time order.
+
+    A restart from time T writes a new ``<T>`` directory; rows of earlier directories after T
+    belong to the abandoned attempt (iterations that were computed but never written as a
+    time directory) and are discarded."""
     merged: dict[float, list] = {}
     columns: list[str] = []
     for d in time_dirs(Path(fo_dir)):
+        start = float(d.name)
+        for k in [k for k in merged if k > start]:
+            del merged[k]
         cands = sorted(d.glob(Path(filename).stem + "*.dat"), key=lambda p: (len(p.name), p.name))
         for f in cands:
             if f.name != filename and not re.match(re.escape(Path(filename).stem) + r"_\d+\.dat$", f.name):
@@ -109,7 +126,7 @@ def read_series(fo_dir: Path, filename: str) -> Optional[DatTable]:
             t = parse_dat_text(f.read_text(errors="replace"))
             if t.columns:
                 columns = columns or t.columns
-            for r in t.rows:
+            for r in t.complete_rows() if t.columns else t.rows:
                 if r and isinstance(r[0], float):
                     merged[r[0]] = r
     if not merged:

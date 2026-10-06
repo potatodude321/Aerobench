@@ -85,10 +85,12 @@ def screenshot(pid: str, run_id: str, body: ShotBody, e: EngineState = Depends(e
 
 @router.get("/runs/{run_id}/viz/image/{name}")
 def image(pid: str, run_id: str, name: str, e: EngineState = Depends(engine)):
+    import re
+
     p = e.projects.get(pid)
-    if "/" in name or "\\" in name or ".." in name:
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}\.png", name):
         return PlainTextResponse("bad name", status_code=400)
-    return FileResponse(p.root / "cache" / "images" / run_id / name, media_type="image/png")
+    return FileResponse(p.cache_dir("images", run_id) / name, media_type="image/png")
 
 
 @router.get("/runs/{run_id}/viz/script")

@@ -24,7 +24,7 @@ def derived_quantities(cfg: ProjectConfig) -> dict[str, Any]:
     out: dict[str, Any] = {
         "reynolds_length": reynolds(op.speed, L, fl.kinematic_viscosity),
         "reynolds_ref": reynolds(op.speed, cfg.reference.length or L, fl.kinematic_viscosity),
-        "dynamic_pressure_pa": dynamic_pressure(cfg.reference.density, cfg.reference.velocity or op.speed),
+        "dynamic_pressure_pa": dynamic_pressure(cfg.physics.fluid.density, cfg.reference.velocity or op.speed),
         "vehicle_length": L,
         "mach": op.speed / 343.0,
     }
@@ -63,15 +63,16 @@ def patch_config(project: Project, patch: dict[str, Any]) -> ProjectConfig:
             action="Confirm the change explicitly; existing runs keep their stored reference values and can be recomputed.")
     if "reference" in patch:
         patch = {**patch, "reference": {k: v for k, v in patch["reference"].items() if k != "confirm_after_results"}}
-    data = deep_merge(project.config.to_json(), patch)
-    new = ProjectConfig.model_validate(data)
-    project.config = new
-    project.save()
-    return new
+    return project.transform(lambda cfg: ProjectConfig.model_validate(deep_merge(cfg.to_json(), patch)))
 
 
 def apply_preset(project: Project, kind: str, value: str) -> ProjectConfig:
-    cfg = project.config.model_copy(deep=True)
+    if kind not in ("template", "tunnel", "mesh", "numerics"):
+        raise AeroBenchError.make("config.preset_kind", ErrorCategory.CONFIGURATION, f"Unknown preset kind '{kind}'.")
+    return project.transform(lambda cfg: _with_preset(cfg, kind, value))
+
+
+def _with_preset(cfg: ProjectConfig, kind: str, value: str) -> ProjectConfig:
     if kind == "template":
         cfg = apply_template(cfg, value)
     elif kind == "tunnel":
@@ -82,11 +83,7 @@ def apply_preset(project: Project, kind: str, value: str) -> ProjectConfig:
         cfg.mesh.surface = []
     elif kind == "numerics":
         cfg.numerics.preset = NumericsPreset(value)
-    else:
-        raise AeroBenchError.make("config.preset_kind", ErrorCategory.CONFIGURATION, f"Unknown preset kind '{kind}'.")
-    project.config = ProjectConfig.model_validate(cfg.to_json())
-    project.save()
-    return project.config
+    return cfg
 
 
 def numerics_presets() -> dict[str, Any]:

@@ -87,6 +87,11 @@ def create_app(ctx: Optional[AppContext] = None, token: str = "", dev_cors: bool
 
     @app.middleware("http")
     async def auth(request: Request, call_next):
+        # Path parameters become file-system path components: refuse traversal tricks
+        # (decoded backslashes, dot segments, NUL) before any route sees them.
+        raw = request.url.path
+        if "\\" in raw or "\x00" in raw or any(seg in ("..", ".") for seg in raw.split("/")):
+            return JSONResponse({"error": {"code": "request.bad_path", "summary": "Invalid path"}}, status_code=400)
         if state.token and request.url.path.startswith("/api/") and request.url.path not in ("/api/health",):
             if request.method == "OPTIONS":
                 return await call_next(request)

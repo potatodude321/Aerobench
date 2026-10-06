@@ -96,6 +96,12 @@ def validate_definition(project: Project, ctx: AppContext, kind: str, defn: Defi
     if s.concurrency * s.cores_per_run > maxc:
         errs.append({"path": "scheduling", "message": f"{s.concurrency} concurrent designs × {s.cores_per_run} cores exceed the {maxc} cores "
                      "available; reduce concurrency or cores per run (oversubscription would slow every run down)."})
+    axle_metrics = {"Cl_front", "Cl_rear", "downforce_front_N", "downforce_rear_N", "balance_front_pct"}
+    no_axles = cfg.vehicle.wheelbase is None
+    used = ([o.metric for o in defn.objectives] + [c.metric for c in defn.constraints]) if isinstance(defn, OptimisationDefinition) else []
+    for m in used:
+        if m in axle_metrics and no_axles:
+            errs.append({"path": "objectives", "message": f"'{m}' needs front and rear axles, but no wheels are defined"})
     if isinstance(defn, OptimisationDefinition):
         for o in defn.objectives:
             if o.metric not in METRIC_INFO:
@@ -185,19 +191,18 @@ def start(project: Project, ctx: AppContext, kind: str, data: dict[str, Any], la
         lst = c.studies if kind == "study" else c.optimisations
         lst[:] = [x for x in lst if x.id != defn.id] + [defn]  # type: ignore[list-item]
 
-    project.update(keep)
     sid = short_id("study")
     now = utc_now_iso()
     sizing = baseline_extent(project, cfg)
-    project.db.insert("studies", {
-        "id": sid, "kind": kind, "name": defn.name, "definition_json": defn.model_dump(mode="json"), "status": "running",
-        "created_at": now, "updated_at": now, "definition_id": defn.id, "base_config_json": cfg.to_json(), "started_at": now,
-        "summary_json": {"sizing_box": sizing.model_dump(mode="json"), "baseline_values": base,
-                         "yaw_range": list(yr) if yr else None},
-    })
+    # everything that can fail is prepared before the study row exists
     rows = []
+    opt_state = None
     if isinstance(defn, StudyDefinition):
-        for i, d in enumerate(generate(defn, base)):
+        try:
+            generated = generate(defn, base)
+        except ValueError as exc:
+            raise _err("study.invalid", f"The designs could not be generated: {exc}") from exc
+        for i, d in enumerate(generated):
             rows.append({"id": short_id("design"), "study_id": sid, "idx": i, "origin": d["origin"], "values_json": d["values"],
                          "status": "pending", "attempts": 0, "run_ids_json": [], "created_at": now, "updated_at": now})
     else:
@@ -213,9 +218,19 @@ def start(project: Project, ctx: AppContext, kind: str, data: dict[str, Any], la
             rows.append({"id": short_id("design"), "study_id": sid, "idx": 0, "origin": "baseline", "values_json": base, "status": "pending",
                          "attempts": 0, "run_ids_json": [], "token": tok, "unit_json": x0, "created_at": now, "updated_at": now,
                          "notes_json": [] if in_bounds else ["The baseline lies outside the variable bounds; it is evaluated for reference only."]})
-        project.db.insert("optimiser_state", {"study_id": sid, "algorithm": opt.name, "state_json": opt.state(), "updated_at": now})
-    for r in rows:
-        project.db.insert("designs", r)
+        opt_state = opt.state()
+    project.update(keep)
+    with project.db.tx():
+        project.db.insert("studies", {
+            "id": sid, "kind": kind, "name": defn.name, "definition_json": defn.model_dump(mode="json"), "status": "running",
+            "created_at": now, "updated_at": now, "definition_id": defn.id, "base_config_json": cfg.to_json(), "started_at": now,
+            "summary_json": {"sizing_box": sizing.model_dump(mode="json"), "baseline_values": base,
+                             "yaw_range": list(yr) if yr else None},
+        })
+        if opt_state is not None:
+            project.db.insert("optimiser_state", {"study_id": sid, "algorithm": opt_state["algorithm"], "state_json": opt_state, "updated_at": now})
+        for r in rows:
+            project.db.insert("designs", r)
     project.db.log_event("study_started", sid, kind=kind, definition=defn.id)
     if launch_worker:
         ensure_worker_process(project.root)
@@ -239,7 +254,8 @@ def set_status(project: Project, sid: str, action: str, launch_worker: bool = Tr
         new = "cancelling"
     else:
         raise _err("study.action", f"Unknown action '{action}'.")
-    project.db.update("studies", "id", sid, {"status": new, "updated_at": utc_now_iso()})
+    if not project.db.update("studies", "id", sid, {"status": new, "updated_at": utc_now_iso()}, where_status=(st,)):
+        raise _err("study.state", "The study changed state meanwhile; refresh and try again.")
     project.db.log_event(f"study_{action}", sid)
     if launch_worker:
         ensure_worker_process(project.root)
@@ -397,7 +413,7 @@ def parameter_preview(project: Project, values: dict[str, float], params: Option
     full = parameter_values_complete(defs, values)
     tr = frozen_transform(project, cfg, cfg.geometry.revision_id)  # type: ignore[arg-type]
     cfd, _ = place_in_cfd_frame(project.raw_surface(), tr)
-    res = apply_parameters(cfd, cfg.geometry.components, cfg.vehicle.wheels, defs, full)
+    res = apply_parameters(cfd, cfg.geometry.components, cfg.vehicle.wheels, defs, full, cfg.vehicle.centreline_y)
     chk = check_deformation(cfd, res, defs, check_intersections=check, components=cfg.geometry.components).as_dict() if check else {"valid": None, "errors": [], "warnings": [], "stats": {}}
     vcfg = cfg.model_copy(deep=True)
     vcfg.vehicle.wheels = res.wheels

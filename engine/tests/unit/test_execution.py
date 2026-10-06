@@ -77,3 +77,20 @@ def test_native_windows_layout_detection_and_command(tmp_path, monkeypatch):
     env = par.env
     assert env["WM_PROJECT_DIR"] == info.project_dir and env["MPI_BUFFER_SIZE"]
     assert env["PATH"].split(os.pathsep)[0] == info.bin_dir
+
+
+def test_two_processes_never_overwrite_each_others_config(tmp_path):
+    """The engine and the worker hold separate Project objects for the same folder."""
+    import time
+
+    from aerobench.project.store import Project
+
+    api = Project.create(tmp_path / "p", "Shared")
+    worker = Project.open(tmp_path / "p")
+    time.sleep(0.01)
+    api.update(lambda c: setattr(c.operating, "speed", 55.0))  # user edit in the GUI
+    worker.update(lambda c: setattr(c.reference, "locked", True))  # worker ingests a run
+    for p in (api, worker):
+        assert p.config.operating.speed == 55.0 and p.config.reference.locked is True
+    reopened = Project.open(tmp_path / "p")
+    assert reopened.config.operating.speed == 55.0 and reopened.config.reference.locked is True

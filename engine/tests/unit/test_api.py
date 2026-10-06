@@ -1,4 +1,3 @@
-import os
 
 import pytest
 from fastapi.testclient import TestClient
@@ -137,3 +136,14 @@ def test_exploration_endpoints(client, tmp_path):
     r = client.put(f"/api/p/{pid}/parameters", json={"parameters": [{**params[0], "components": ["nope"]}]})
     assert r.status_code == 400
     assert client.get(f"/api/p/{pid}/reports").json() == []
+
+
+def test_path_traversal_is_rejected(client, tmp_path):
+    pid = _project(client, tmp_path)
+    for bad in (f"/api/p/{pid}/runs/..%5C..%5Csecret/viz/image/a.png", f"/api/p/{pid}/runs/x/viz/image/..%2F..%2Fproject.json",
+                f"/api/p/{pid}/jobs/..%5Cx/log"):
+        r = client.get(bad)
+        assert r.status_code in (400, 404), (bad, r.status_code)
+        assert "FoamFile" not in r.text and "project_id" not in r.text
+    r = client.get(f"/api/p/{pid}/runs/run-1/viz/image/evil.txt")
+    assert r.status_code == 400

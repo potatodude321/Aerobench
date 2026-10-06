@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ..core.errors import Diagnostic, ErrorCategory, Severity
-from .provider import CommandSpec, ExecutionProvider, MPIInfo, ProviderInfo
+from .provider import CommandSpec, ExecutionProvider, MPIInfo, ProviderInfo, staged_case_key
 
 
 class RemoteSSHProvider(ExecutionProvider):
@@ -38,8 +38,8 @@ class RemoteSSHProvider(ExecutionProvider):
         return argv + [self.target]
 
     def remote_case_dir(self, case_dir: Path) -> str:
-        root = self.config.get("remote_root", "~/aerobench")
-        return f"{root}/{Path(case_dir).parent.name}/{Path(case_dir).name}"
+        root = self.config.get("remote_root", "aerobench")  # relative = in the remote home directory
+        return f"{root.rstrip('/')}/{staged_case_key(case_dir)}"
 
     def exec_path(self, host_path: Path) -> str:
         return self.remote_case_dir(host_path)

@@ -130,7 +130,7 @@ def _tessellate_ocp(path: Path, linear_rel: float, angular: float) -> TriSurface
     diag = float(np.linalg.norm([hi.X() - lo.X(), hi.Y() - lo.Y(), hi.Z() - lo.Z()])) or 1.0
     BRepMesh_IncrementalMesh(shape, linear_rel * diag, False, angular, True)
 
-    to_face = getattr(TopoDS, "Face_s", None) or getattr(TopoDS, "Face")  # OCP < 8 / >= 8
+    to_face = getattr(TopoDS, "Face_s", None) or TopoDS.Face  # OCP < 8 / >= 8
     # group faces by solid (or shell for surface models); faces outside both are "surfaces".
     # Face identity: OCP hash (TShape + location) confirmed with IsSame.
     seen_faces: dict[int, list] = {}

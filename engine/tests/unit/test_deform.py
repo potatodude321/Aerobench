@@ -173,3 +173,12 @@ def test_displacement_limit(car):
     r = apply_parameters(s, comps, wheels, [p], {"p": 0.05})
     chk = check_deformation(s, r, [p])
     assert not chk.valid and chk.errors[0]["code"] == "geometry.displacement_limit"
+
+
+def test_static_edge_piercing_a_moved_face_is_found():
+    # a large moved triangle (z = 0 plane) pierced by a small static triangle's edge; the moved
+    # triangle's own edges miss the static one
+    pts = np.array([[-5, -5, 0], [5, -5, 0], [0, 5, 0], [0, 0, -0.5], [0.2, 0, 0.5], [0, 0.2, 0.5]], dtype=float)
+    faces = np.array([[0, 1, 2], [3, 4, 5]])
+    hits = edge_triangle_hits(pts, faces, np.array([0]))
+    assert hits == {(0, 1)}

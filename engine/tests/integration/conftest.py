@@ -1,6 +1,4 @@
 import os
-import shutil
-from pathlib import Path
 
 from aerobench.geometry.fixtures import generic_car
 from aerobench.geometry.io import write_stl

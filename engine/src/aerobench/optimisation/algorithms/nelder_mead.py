@@ -17,6 +17,9 @@ import numpy as np
 
 from .base import Observation, Optimizer, total_violation
 
+# A failed evaluation is worse than any real value; kept finite so the state stays valid JSON.
+FAILED_VALUE = 1e300
+
 
 class NelderMead(Optimizer):
     name = "nelder_mead"
@@ -56,7 +59,7 @@ class NelderMead(Optimizer):
     # ------------------------------------------------------------------ helpers
     def fpen(self, o: Observation) -> float:
         if o.failed or o.f is None:
-            return math.inf
+            return FAILED_VALUE
         return float(o.f[0]) + self.penalty * total_violation(o.g)
 
     def remaining(self) -> int:
@@ -93,6 +96,12 @@ class NelderMead(Optimizer):
             px = self.project(np.asarray(self.queue[0]))
             self.queue.pop(0)
             known = self._lookup(px)
+            if known is None and self.phase in ("init", "shrink"):
+                # the same point is already being evaluated (e.g. the baseline): wait for it
+                same = next((t for t, x in self.pending.items() if t not in self.waiting and np.abs(np.asarray(x) - px).max() < 1e-12), None)
+                if same is not None:
+                    self.waiting.append(same)
+                    continue
             if known is not None:
                 # already evaluated (baseline, clipped/snapped duplicate): reuse, no budget spent
                 if self.phase in ("init", "shrink"):
@@ -123,7 +132,7 @@ class NelderMead(Optimizer):
 
     def _check_converged(self, X, F) -> bool:
         diam = max(np.abs(x - X[0]).max() for x in X[1:]) if len(X) > 1 else 0.0
-        finite = [f for f in F if np.isfinite(f)]
+        finite = [f for f in F if f < FAILED_VALUE]
         spread = (max(finite) - min(finite)) if len(finite) == len(F) else math.inf
         return diam < self.xtol and spread < self.ftol
 
@@ -146,7 +155,7 @@ class NelderMead(Optimizer):
             self.phase = "reflect"
             self.queue = [np.clip(xr, 0, 1).tolist()]
             return
-        stage, fx = self.phase, self.trial.get("f", math.inf)
+        stage, fx = self.phase, self.trial.get("f", FAILED_VALUE)
         c = np.asarray(self.trial["c"])
         fb, fsw, fw = F[0], F[-2], F[-1]
         if stage == "reflect":

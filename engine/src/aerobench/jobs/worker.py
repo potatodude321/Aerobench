@@ -91,9 +91,11 @@ class Worker:
                     fn(self.project, j["target_id"])
                 self.db.update("jobs", "id", j["id"], {"ingested": 1})
                 report["ingested"].append(j["id"])
-            except Exception:  # noqa: BLE001 — never let one bad result stop the queue
-                self.db.update("jobs", "id", j["id"], {"ingested": 1, "message": "ingestion error: " + traceback.format_exc()[-1500:]})
-                self.db.log_event("ingest_error", j["id"], error=traceback.format_exc()[-3000:])
+            except Exception as exc:  # noqa: BLE001 — never let one bad result stop the queue
+                tb = traceback.format_exc()
+                self.db.update("jobs", "id", j["id"], {"ingested": 1, "message": "ingestion error: " + tb[-1500:]})
+                self.db.log_event("ingest_error", j["id"], error=tb[-3000:])
+                self._finalise_unreadable(j, exc)
         try:
             from ..studies.driver import drive_all
 
@@ -102,6 +104,24 @@ class Worker:
             self.db.log_event("study_driver_error", None, error=traceback.format_exc()[-3000:])
         self._schedule(report)
         return report
+
+    def _finalise_unreadable(self, job: dict, exc: Exception) -> None:
+        """A finished job whose outputs could not be read must not leave its run or mesh
+        'running' for ever (studies would wait on it)."""
+        from ..core.errors import Diagnostic, ErrorCategory
+
+        diag = Diagnostic(code="results.unreadable", category=ErrorCategory.INTERNAL,
+                          summary="The results of this job could not be read.",
+                          likely_cause="Output files are incomplete or damaged (e.g. the solver was killed while writing).",
+                          action="Re-ingest the run from the Run page; if it fails again, reproduce the run.",
+                          details=f"{type(exc).__name__}: {exc}").model_dump(mode="json")
+        try:
+            if job["kind"] == "solve" and job["target_id"]:
+                self.db.update("runs", "id", job["target_id"], {"status": "failed", "diagnostics_json": [diag]})
+            elif job["kind"] == "mesh" and job["target_id"]:
+                self.db.update("mesh_revisions", "id", job["target_id"], {"status": "failed"})
+        except Exception:  # noqa: BLE001
+            pass
 
     def _dependency_state(self, dep_id: Optional[str]) -> str:
         """'ok' | 'wait' | 'failed'"""

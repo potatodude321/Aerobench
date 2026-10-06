@@ -13,7 +13,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Optional
 
-from ..core.errors import Diagnostic, ErrorCategory, Severity
+from ..core.errors import AeroBenchError, Diagnostic, ErrorCategory, Severity
 from .provider import CommandSpec, ExecutionProvider, MPIInfo, ProviderInfo
 
 CANDIDATE_BASHRCS = [
@@ -134,25 +134,54 @@ class LocalPosixProvider(ExecutionProvider):
         )
 
     @staticmethod
+    def _link_base() -> Path:
+        """Private (0700, owned by this user) folder for space-free case links: a shared,
+        predictable location would let another local user substitute the case."""
+        import stat as _stat
+
+        env = os.environ.get("AEROBENCH_LINK_DIR")
+        if env:
+            base = Path(env)
+        else:
+            rt = os.environ.get("XDG_RUNTIME_DIR")
+            base = Path(rt) / "aerobench-links" if rt and os.path.isdir(rt) else Path.home() / ".cache" / "aerobench" / "links"
+        base.mkdir(parents=True, exist_ok=True, mode=0o700)
+        st = os.lstat(base)
+        unsafe = _stat.S_ISLNK(st.st_mode) or (st.st_mode & 0o022) or (hasattr(os, "getuid") and st.st_uid != os.getuid())
+        if unsafe:
+            raise AeroBenchError.make("environment.link_dir_unsafe", ErrorCategory.ENVIRONMENT,
+                                      f"The folder for case links ({base}) is not private to this user.",
+                                      action="Remove it or set AEROBENCH_LINK_DIR to a folder only you can write to.")
+        return base
+
+    @staticmethod
     def safe_case_path(case_dir: Path) -> str:
         """OpenFOAM on POSIX rejects file names with spaces (``allowSpaceInFileName`` is read
-        too late to help ``-case``).  Route such cases through a space-free symlink."""
-        s = str(case_dir)
-        if not any(c in s for c in ' \t"\'') :
-            return s
+        too late to help ``-case``).  Route such cases through a space-free symlink in a
+        private per-user folder."""
         import hashlib
-        import tempfile
+        import stat as _stat
 
-        base = Path(os.environ.get("AEROBENCH_LINK_DIR", Path(tempfile.gettempdir()) / "aerobench-links"))
-        base.mkdir(parents=True, exist_ok=True)
-        link = base / hashlib.sha1(s.encode()).hexdigest()[:16]
-        if link.is_symlink() and os.readlink(link) != s:
-            link.unlink()
-        if not link.exists():
-            try:
-                link.symlink_to(s, target_is_directory=True)
-            except FileExistsError:
-                pass
+        s = str(case_dir)
+        if not any(c in s for c in ' \t"\''):
+            return s
+        link = LocalPosixProvider._link_base() / hashlib.sha256(s.encode()).hexdigest()[:24]
+        try:
+            st = os.lstat(link)
+            if _stat.S_ISLNK(st.st_mode):
+                if os.readlink(link) == s:
+                    return str(link)
+                link.unlink()
+            else:
+                raise AeroBenchError.make("environment.link_conflict", ErrorCategory.ENVIRONMENT,
+                                          f"{link} exists and is not a link created by this application.")
+        except FileNotFoundError:
+            pass
+        try:
+            link.symlink_to(s, target_is_directory=True)
+        except FileExistsError:
+            if not (link.is_symlink() and os.readlink(link) == s):
+                raise
         return str(link)
 
     def exec_path(self, host_path: Path) -> str:

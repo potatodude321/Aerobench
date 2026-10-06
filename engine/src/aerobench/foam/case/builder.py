@@ -160,7 +160,7 @@ def resolve_case(cfg: ProjectConfig, plan: MeshPlan) -> ResolvedCase:
         turbulence=turb,
         ref_area=ref.area,
         ref_length=ref.length,
-        ref_density=ref.density,
+        ref_density=cfg.physics.fluid.density,
         ref_velocity=ref.velocity or op.speed,
         moment_centre=tuple(ref.moment_centre),
         axle_reference=axle_ref,

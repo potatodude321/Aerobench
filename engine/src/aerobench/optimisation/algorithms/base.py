@@ -135,7 +135,8 @@ class Optimizer(ABC):
         """Record an evaluation.  ``x`` must be given for points the optimiser did not ask
         for (e.g. the baseline design)."""
         if token in self.pending:
-            xv = self.pending.pop(token)
+            asked_x = self.pending.pop(token)
+            xv = [float(v) for v in x] if x is not None else asked_x
         elif x is not None:
             xv = [float(v) for v in x]
         else:

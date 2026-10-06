@@ -64,6 +64,25 @@ class ProviderInfo:
         return [p for p in self.problems if p.severity.value == "error"]
 
 
+def staged_case_key(case_dir: Path) -> str:
+    """Collision-free, shell-safe relative location of a staged copy of ``case_dir``.
+
+    ``<parent>/<name>-<hash>``: readable, restricted to ``[A-Za-z0-9_.-]`` (OpenFOAM's
+    parallel launch cannot handle spaces) and unique per host path, so two projects with
+    the same run id never share a remote directory.
+    """
+    import hashlib
+    import re
+
+    case_dir = Path(case_dir)
+
+    def safe(part: str) -> str:
+        return re.sub(r"[^A-Za-z0-9_.-]", "_", part).strip(".") or "case"
+
+    digest = hashlib.sha256(str(case_dir).encode("utf-8")).hexdigest()[:10]
+    return f"{safe(case_dir.parent.name)}/{safe(case_dir.name)}-{digest}"
+
+
 class ExecutionProvider(ABC):
     kind: str = ""
     staging: str = "in_place"
@@ -103,6 +122,18 @@ class ExecutionProvider(ABC):
         return None
 
     def stage_out(self, case_dir: Path) -> Optional[CommandSpec]:
+        return None
+
+    # Staged providers run the solver on a copy of the case.  Host-side edits made between
+    # solver steps (scheme switch, endTime, clean-up) and the graceful-stop trigger must be
+    # mirrored into that copy; in-place providers return None (nothing to do).
+    def push_files(self, case_dir: Path, relpaths: list[str]) -> Optional[CommandSpec]:
+        return None
+
+    def remove_paths(self, case_dir: Path, globs: list[str]) -> Optional[CommandSpec]:
+        return None
+
+    def write_file(self, case_dir: Path, relpath: str, content: str) -> Optional[CommandSpec]:
         return None
 
     def serialise(self) -> dict[str, Any]:

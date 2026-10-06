@@ -12,7 +12,7 @@ from ..core.errors import AeroBenchError, ErrorCategory
 from ..core.fs import atomic_write_text
 from ..core.ids import short_id, utc_now_iso
 from ..project.store import Project
-from .process import is_alive, launch_detached, python_executable
+from .process import is_alive, kill_tree, launch_detached, python_executable
 from .spec import JobSpec, JobState, JobStatus, Step, read_state, write_model
 
 HEARTBEAT_STALE = 60.0
@@ -115,6 +115,14 @@ class JobManager:
         return status
 
     def _mark_interrupted(self, job_id: str, st: JobState, msg: str) -> None:
+        # the runner is gone; its solver (own session/process group) may still be running and
+        # would compete with a retry or resume for cores and time directories
+        if st.child_pid and is_alive(st.child_pid, st.child_create_time):
+            try:
+                kill_tree(st.child_pid, timeout=10.0, graceful=True)
+                msg += " The orphaned solver process was stopped."
+            except Exception:  # noqa: BLE001
+                msg += " An orphaned solver process could not be stopped (PID %d)." % st.child_pid
         st.status = JobStatus.INTERRUPTED
         st.message = msg
         st.ended_at = utc_now_iso()

@@ -56,8 +56,9 @@ def drive_all(project: Project, ctx) -> list[dict[str, Any]]:
             out.append(StudyRuntime(project, ctx, dec(row)).tick())
         except Exception as exc:  # noqa: BLE001 - one broken study must not stop the others
             project.db.log_event("study_error", row["id"], error=traceback.format_exc()[-3000:])
-            project.db.update("studies", "id", row["id"], {"status": "failed", "message": f"Internal error: {exc}",
-                                                           "ended_at": utc_now_iso(), "updated_at": utc_now_iso()})
+            project.db.update("studies", "id", row["id"], where_status=("running", "paused", "cancelling"),
+                              changes={"status": "failed", "message": f"Internal error: {exc}", "ended_at": utc_now_iso(),
+                                       "updated_at": utc_now_iso()})
             out.append({"study": row["id"], "error": str(exc)})
     return out
 
@@ -118,6 +119,8 @@ class StudyRuntime:
         if status == "cancelling":
             self._cancel_all()
             return report
+        if self.opt is not None:
+            self._reconcile_tokens()
         self._sync(report)
         if self.opt is not None:
             self._tell_finished()
@@ -269,25 +272,69 @@ class StudyRuntime:
             cons.append({"metric": c.metric, "op": c.op, "bound_kind": c.bound.value, "g": worst_g if math.isfinite(worst_g) else None,
                          "satisfied": bool(worst_g <= 0), "per_condition": detail})
             feasible = feasible and worst_g <= 0
+        # a design whose objective cannot be evaluated is never a candidate optimum
+        feasible = feasible and all(o["value"] is not None for o in objs)
         return objs, cons, feasible
 
     def _tell_finished(self) -> None:
+        """Tell terminal designs to the optimiser, checkpoint, then mark them told.
+
+        The order makes a crash at any point harmless: ``tell`` is idempotent per token, and a
+        design whose token is still pending in a (restored) optimiser state is told again."""
         assert self.opt is not None
-        for d in [x for x in self.designs(TERMINAL_DESIGN) if not x.get("told") and x.get("token")]:
-            if d["token"] not in self.opt.pending and not any(o.token == d["token"] for o in self.opt.observations) and d["token"] != "baseline":
-                self._update_design(d["id"], {"told": 1})
+        told_ids: list[str] = []
+        for d in self.designs(TERMINAL_DESIGN):
+            tok = d.get("token")
+            if not tok:
+                continue
+            pending = tok in self.opt.pending
+            observed = any(o.token == tok for o in self.opt.observations)
+            if not pending and (observed or d["status"] == "cancelled"):
+                if not d.get("told"):
+                    told_ids.append(d["id"])
                 continue
             if d["status"] == "completed":
                 objs = d.get("objectives") or []
-                f = [(-o["value"] if o["sense"] == Sense.MAXIMIZE.value else o["value"]) if o["value"] is not None else math.nan for o in objs]
+                f = [(-o["value"] if o["sense"] == Sense.MAXIMIZE.value else o["value"]) if o.get("value") is not None else math.nan
+                     for o in objs]
                 g = [c["g"] if c.get("g") is not None else math.nan for c in (d.get("constraints") or [])]
-                failed = any(not math.isfinite(x) for x in f)
-                self.opt.tell(d["token"], None if failed else f, g if self.opt.n_con else None, failed=failed, x=d.get("unit"))
+                failed = not f or any(not math.isfinite(x) for x in f)
+                self.opt.tell(tok, None if failed else f, g if self.opt.n_con else None, failed=failed, x=d.get("unit"))
             elif d["status"] == "cancelled":
-                self.opt.forget_pending(d["token"])
-            else:
-                self.opt.tell(d["token"], failed=True, x=d.get("unit"))
-            self._update_design(d["id"], {"told": 1})
+                self.opt.forget_pending(tok)
+            elif d.get("unit") is not None or pending:
+                self.opt.tell(tok, failed=True, x=d.get("unit"))
+            told_ids.append(d["id"])
+        if told_ids:
+            self.checkpoint()
+            for did in told_ids:
+                self._update_design(did, {"told": 1})
+
+    def _reconcile_tokens(self) -> None:
+        """Points the optimiser asked for but whose design rows were never written (crash
+        between the checkpoint and the insert) become pending designs again."""
+        assert self.opt is not None
+        known = {r["token"] for r in self.db.all("SELECT token FROM designs WHERE study_id = ? AND token IS NOT NULL", (self.row["id"],))}
+        for tok, u in list(self.opt.pending.items()):
+            if tok not in known:
+                self._insert_design(tok, u, origin="optimiser (recovered)")
+
+    def _insert_design(self, tok: str, u: list[float], origin: str = "optimiser") -> Optional[str]:
+        if self.db.one("SELECT id FROM designs WHERE study_id = ? AND token = ?", (self.row["id"], tok)):
+            return None
+        values = self.space.from_unit(u)
+        did = short_id("design")
+        n_idx = int(self.db.one("SELECT COALESCE(MAX(idx), -1) AS m FROM designs WHERE study_id = ?", (self.row["id"],))["m"]) + 1
+        row = {"id": did, "study_id": self.row["id"], "idx": n_idx, "origin": origin, "values_json": values, "status": "pending",
+               "attempts": 0, "run_ids_json": [], "token": tok, "unit_json": list(u), "created_at": utc_now_iso(), "updated_at": utc_now_iso()}
+        cached = self._identical_completed(values)
+        if cached is not None:
+            row.update({"status": cached["status"], "origin": f"{origin} (repeat)", "metrics_json": cached.get("metrics"),
+                        "objectives_json": cached.get("objectives"), "constraints_json": cached.get("constraints"),
+                        "feasible": cached.get("feasible"), "error_json": cached.get("error"), "convergence_json": cached.get("convergence"),
+                        "notes_json": [f"Identical to design {cached['id']}; its results were reused without a new run."]})
+        self.db.insert("designs", row)
+        return did if cached is None else None
 
     # ------------------------------------------------------------------ 3. launch
     def _active_count(self) -> int:
@@ -312,7 +359,7 @@ class StudyRuntime:
                 free -= 1
         if needs_baseline and (base is None or base["status"] != "completed"):
             if base is not None and base["status"] in ("failed", "cancelled"):
-                self.db.update("studies", "id", self.row["id"], {"status": "failed", "ended_at": utc_now_iso(), "updated_at": utc_now_iso(),
+                self.db.update("studies", "id", self.row["id"], where_status=("running",), changes={"status": "failed", "ended_at": utc_now_iso(), "updated_at": utc_now_iso(),
                                                                  "message": "The baseline design failed, so baseline-relative constraints cannot be evaluated."})
             return
         free = self.sched.concurrency - self._active_count()
@@ -321,23 +368,11 @@ class StudyRuntime:
         asked = self.opt.ask(min(free, max(1, self.defn.batch_size)))
         if not asked and self._active_count() == 0 and not self.opt.pending:
             self.exhausted = True
-        n_idx = int(self.db.one("SELECT COALESCE(MAX(idx), -1) AS m FROM designs WHERE study_id = ?", (self.row["id"],))["m"]) + 1
+        if asked:
+            self.checkpoint()  # tokens are durable before any design row refers to them
         for tok, u in asked:
-            values = self.space.from_unit(u)
-            did = short_id("design")
-            row = {"id": did, "study_id": self.row["id"], "idx": n_idx, "origin": "optimiser", "values_json": values, "status": "pending",
-                   "attempts": 0, "run_ids_json": [], "token": tok, "unit_json": list(u), "created_at": utc_now_iso(), "updated_at": utc_now_iso()}
-            n_idx += 1
-            cached = self._identical_completed(values)
-            if cached is not None:
-                row.update({"status": cached["status"], "origin": "optimiser (repeat)", "metrics_json": cached.get("metrics"),
-                            "objectives_json": cached.get("objectives"), "constraints_json": cached.get("constraints"),
-                            "feasible": cached.get("feasible"), "error_json": cached.get("error"), "convergence_json": cached.get("convergence"),
-                            "notes_json": [f"Identical to design {cached['id']}; its results were reused without a new run."]})
-                self.db.insert("designs", row)
-                continue
-            self.db.insert("designs", row)
-            if self._launch_design(dec(self.db.one("SELECT * FROM designs WHERE id = ?", (did,)))):
+            did = self._insert_design(tok, u)
+            if did and self._launch_design(dec(self.db.one("SELECT * FROM designs WHERE id = ?", (did,)))):
                 report["launched"].append(did)
         self.checkpoint()
 
@@ -408,7 +443,7 @@ class StudyRuntime:
             if self.opt.pending or self.opt.remaining() > 0:
                 return
         summary = summarise(self)
-        self.db.update("studies", "id", self.row["id"], {"status": "completed", "ended_at": utc_now_iso(), "updated_at": utc_now_iso(),
+        self.db.update("studies", "id", self.row["id"], where_status=("running",), changes={"status": "completed", "ended_at": utc_now_iso(), "updated_at": utc_now_iso(),
                                                          "summary_json": {**(self.row.get("summary") or {}), **summary}})
         self.db.log_event("study_completed", self.row["id"])
 
@@ -425,7 +460,7 @@ class StudyRuntime:
                     self._update_design(d["id"], {"told": 1})
         self.checkpoint()
         summary = summarise(self)
-        self.db.update("studies", "id", self.row["id"], {"status": "cancelled", "ended_at": utc_now_iso(), "updated_at": utc_now_iso(),
+        self.db.update("studies", "id", self.row["id"], where_status=("cancelling",), changes={"status": "cancelled", "ended_at": utc_now_iso(), "updated_at": utc_now_iso(),
                                                          "summary_json": {**(self.row.get("summary") or {}), **summary}})
 
 
@@ -466,7 +501,8 @@ def summarise(rt: StudyRuntime) -> dict[str, Any]:
         out["gci"] = gci_out
     if rt.kind == "optimisation":
         defn: OptimisationDefinition = rt.defn
-        feas = [d for d in ds if d["status"] == "completed" and d.get("feasible")]
+        feas = [d for d in ds if d["status"] == "completed" and d.get("feasible")
+                and all(o.get("value") is not None for o in (d.get("objectives") or [{}]))]
         if len(defn.objectives) == 1 and feas:
             o = defn.objectives[0]
             sign = -1 if o.sense == Sense.MAXIMIZE else 1
@@ -513,7 +549,21 @@ def mesh_sensitivity(rt: StudyRuntime, ds: list[dict]) -> Optional[dict[str, Any
     return {"variable": vid, "designs": [d["id"] for _, d in trio], "results": res} if res else None
 
 
+def _finite(v: Any) -> Any:
+    """Replace non-finite floats so checkpoints are always valid JSON."""
+    if isinstance(v, float) and not math.isfinite(v):
+        return None if math.isnan(v) else math.copysign(1e300, v)
+    if isinstance(v, dict):
+        return {k: _finite(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_finite(x) for x in v]
+    return v
+
+
 def _json(v: Any) -> str:
     import json
 
-    return json.dumps(v, allow_nan=False, default=str)
+    try:
+        return json.dumps(v, allow_nan=False, default=str)
+    except ValueError:
+        return json.dumps(_finite(v), allow_nan=False, default=str)

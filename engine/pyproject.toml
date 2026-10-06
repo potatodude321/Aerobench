@@ -43,3 +43,16 @@ markers = [
   "paraview: requires pvpython (visualisation integration)",
   "slow: long-running engineering regression",
 ]
+
+[tool.ruff]
+line-length = 140
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B"]
+# E501: long lines are allowed up to the formatter's judgement; E731/E741/E702: style only;
+# B008: FastAPI's Depends()/File() defaults; B904/B905: explicit by design; B027: optional hooks.
+ignore = ["E501", "E731", "E741", "E702", "B008", "B904", "B905", "B027"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/aerobench/viz/server/*.py" = ["E402"]

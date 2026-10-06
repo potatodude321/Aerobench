@@ -1,0 +1,237 @@
+"""Project directory, configuration persistence, geometry blobs and revisions (ADR-0004)."""
+
+from __future__ import annotations
+
+import io
+import json
+import shutil
+from pathlib import Path
+from typing import Any, Callable, Optional
+
+import numpy as np
+
+from ..core.errors import AeroBenchError, ErrorCategory
+from ..core.fs import atomic_write_bytes, atomic_write_json, sha256_bytes
+from ..core.ids import short_id, utc_now_iso
+from ..domain.migrations import migrate
+from ..domain.project import SCHEMA_VERSION, ProjectConfig, stage_hashes
+from ..geometry.pose import place_in_cfd_frame
+from ..geometry.trisurface import TriSurface
+from .db import ProjectDB, dec
+
+PROJECT_FILE = "project.json"
+DB_FILE = "project.db"
+LAYOUT = ("geometry/blobs", "geometry/sources", "meshes", "runs", "jobs", "cache", "exports", "reports", ".autosave")
+AUTOSAVE_KEEP = 20
+
+
+def is_project_dir(path: Path) -> bool:
+    return (Path(path) / PROJECT_FILE).exists()
+
+
+class Project:
+    def __init__(self, root: Path, config: ProjectConfig, db: ProjectDB):
+        self.root = Path(root)
+        self.config = config
+        self.db = db
+        self._surface_cache: dict[str, TriSurface] = {}
+
+    # ------------------------------------------------------------------ lifecycle
+    @classmethod
+    def create(cls, root: Path, name: str, config: Optional[ProjectConfig] = None) -> "Project":
+        root = Path(root)
+        if is_project_dir(root):
+            raise AeroBenchError.make("project.exists", ErrorCategory.PROJECT, f"A project already exists at {root}.")
+        if root.exists() and any(root.iterdir()):
+            raise AeroBenchError.make("project.dir_not_empty", ErrorCategory.PROJECT, f"The folder {root} is not empty.",
+                                      action="Choose an empty or new folder for the project.")
+        for d in LAYOUT:
+            (root / d).mkdir(parents=True, exist_ok=True)
+        cfg = config.model_copy(deep=True) if config else ProjectConfig()
+        cfg.name = name
+        db = ProjectDB(root / DB_FILE)
+        db.set_meta("project_id", cfg.project_id)
+        db.set_meta("created_at", cfg.created_at)
+        p = cls(root, cfg, db)
+        p.save(snapshot=False)
+        db.log_event("project_created", cfg.project_id, name=name)
+        return p
+
+    @classmethod
+    def open(cls, root: Path) -> "Project":
+        root = Path(root)
+        f = root / PROJECT_FILE
+        if not f.exists():
+            raise AeroBenchError.make("project.not_found", ErrorCategory.PROJECT, f"No project found at {root}.",
+                                      action="Select a folder containing project.json.")
+        try:
+            raw = json.loads(f.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            backup = cls._latest_autosave(root)
+            raise AeroBenchError.make("project.corrupt", ErrorCategory.PROJECT, "project.json is corrupt.",
+                                      likely_cause="The file was truncated (e.g. power loss) or edited by hand.",
+                                      action=f"Restore the latest autosave ({backup.name if backup else 'none available'}).",
+                                      details=str(exc), autosave=str(backup) if backup else None)
+        v = int(raw.get("schema_version", 0))
+        if v < SCHEMA_VERSION:
+            shutil.copy2(f, root / f"{PROJECT_FILE}.v{v}.bak")
+        cfg = ProjectConfig.model_validate(migrate(raw))
+        for d in LAYOUT:
+            (root / d).mkdir(parents=True, exist_ok=True)
+        db = ProjectDB(root / DB_FILE)
+        p = cls(root, cfg, db)
+        if v < SCHEMA_VERSION:
+            p.save(snapshot=False)
+            db.log_event("project_migrated", cfg.project_id, from_version=v, to_version=SCHEMA_VERSION)
+        return p
+
+    def close(self) -> None:
+        self.db.close()
+
+    @staticmethod
+    def _latest_autosave(root: Path) -> Optional[Path]:
+        snaps = sorted((root / ".autosave").glob("project-*.json"))
+        return snaps[-1] if snaps else None
+
+    def save(self, snapshot: bool = True) -> None:
+        self.config.touch()
+        data = self.config.to_json()
+        atomic_write_json(self.root / PROJECT_FILE, data)
+        if snapshot:
+            stamp = utc_now_iso().replace(":", "").replace("-", "")
+            atomic_write_json(self.root / ".autosave" / f"project-{stamp}.json", data)
+            snaps = sorted((self.root / ".autosave").glob("project-*.json"))
+            for old in snaps[:-AUTOSAVE_KEEP]:
+                old.unlink(missing_ok=True)
+
+    def update(self, fn: Callable[[ProjectConfig], None], snapshot: bool = True) -> ProjectConfig:
+        """Apply a mutation atomically (validated by constructing a new model)."""
+        new = self.config.model_copy(deep=True)
+        fn(new)
+        self.config = ProjectConfig.model_validate(new.model_dump(mode="json"))
+        self.save(snapshot=snapshot)
+        return self.config
+
+    # ------------------------------------------------------------------ paths
+    def mesh_dir(self, mesh_id: str) -> Path:
+        return self.root / "meshes" / mesh_id
+
+    def run_dir(self, run_id: str) -> Path:
+        return self.root / "runs" / run_id
+
+    def job_dir(self, job_id: str) -> Path:
+        return self.root / "jobs" / job_id
+
+    def cache_dir(self, *parts: str) -> Path:
+        p = self.root.joinpath("cache", *parts)
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+
+    # ------------------------------------------------------------------ geometry blobs
+    @staticmethod
+    def _surface_bytes(surf: TriSurface) -> bytes:
+        buf = io.BytesIO()
+        np.savez_compressed(buf, points=surf.points.astype(np.float64), faces=surf.faces.astype(np.int64),
+                            regions=surf.regions.astype(np.int32), names=np.array(json.dumps(surf.region_names)))
+        return buf.getvalue()
+
+    @staticmethod
+    def surface_digest(surf: TriSurface) -> str:
+        import hashlib
+
+        h = hashlib.sha256()
+        h.update(np.ascontiguousarray(surf.points, dtype="<f8").tobytes())
+        h.update(np.ascontiguousarray(surf.faces, dtype="<i8").tobytes())
+        h.update(np.ascontiguousarray(surf.regions, dtype="<i4").tobytes())
+        h.update(json.dumps(surf.region_names).encode())
+        return h.hexdigest()
+
+    def store_surface(self, surf: TriSurface) -> str:
+        sha = self.surface_digest(surf)
+        p = self.root / "geometry" / "blobs" / f"{sha}.npz"
+        if not p.exists():
+            atomic_write_bytes(p, self._surface_bytes(surf))
+        self._surface_cache[sha] = surf
+        return sha
+
+    def load_surface(self, sha: str) -> TriSurface:
+        if sha in self._surface_cache:
+            return self._surface_cache[sha]
+        p = self.root / "geometry" / "blobs" / f"{sha}.npz"
+        if not p.exists():
+            raise AeroBenchError.make("project.blob_missing", ErrorCategory.PROJECT, f"Geometry blob {sha[:12]}… is missing.",
+                                      likely_cause="Files were deleted from the project folder.",
+                                      action="Restore the project folder from backup or re-import the geometry.")
+        with np.load(p, allow_pickle=False) as z:
+            surf = TriSurface(z["points"], z["faces"], z["regions"], json.loads(str(z["names"])))
+        if self.surface_digest(surf) != sha:
+            raise AeroBenchError.make("project.blob_corrupt", ErrorCategory.PROJECT, f"Geometry blob {sha[:12]}… is corrupt.")
+        self._surface_cache[sha] = surf
+        return surf
+
+    # ------------------------------------------------------------------ geometry revisions
+    def add_geometry_revision(
+        self,
+        surf: TriSurface,
+        kind: str,
+        source_filename: Optional[str] = None,
+        source_bytes: Optional[bytes] = None,
+        parent_id: Optional[str] = None,
+        operations: Optional[list[dict]] = None,
+        report: Optional[dict] = None,
+        label: Optional[str] = None,
+        units: Optional[str] = None,
+        parameters: Optional[dict] = None,
+    ) -> str:
+        sha = self.store_surface(surf)
+        src_sha = None
+        if source_bytes is not None:
+            src_sha = sha256_bytes(source_bytes)
+            sp = self.root / "geometry" / "sources" / f"{src_sha}{Path(source_filename or '').suffix.lower()}"
+            if not sp.exists():
+                atomic_write_bytes(sp, source_bytes)
+        rid = short_id("geo")
+        self.db.insert("geometry_revisions", {
+            "id": rid, "parent_id": parent_id, "created_at": utc_now_iso(), "label": label or source_filename or kind,
+            "kind": kind, "source_filename": source_filename, "source_sha256": src_sha, "blob_sha256": sha, "units": units,
+            "operations_json": operations or [], "report_json": report, "n_faces": surf.n_faces,
+            "region_names_json": surf.region_names, "parameters_json": parameters,
+        })
+        self.db.log_event("geometry_revision", rid, kind=kind, parent=parent_id)
+        return rid
+
+    def geometry_revision(self, rid: str) -> dict[str, Any]:
+        r = dec(self.db.one("SELECT * FROM geometry_revisions WHERE id = ?", (rid,)))
+        if r is None:
+            raise AeroBenchError.make("project.geometry_revision_missing", ErrorCategory.PROJECT, f"Unknown geometry revision {rid}.")
+        return r
+
+    def geometry_revisions(self) -> list[dict[str, Any]]:
+        return [dec(r) for r in self.db.all("SELECT * FROM geometry_revisions ORDER BY created_at")]
+
+    def raw_surface(self, rid: Optional[str] = None) -> TriSurface:
+        rid = rid or self.config.geometry.revision_id
+        if rid is None:
+            raise AeroBenchError.make("geometry.missing", ErrorCategory.GEOMETRY, "No geometry has been imported.")
+        return self.load_surface(self.geometry_revision(rid)["blob_sha256"])
+
+    def cfd_surface(self, rid: Optional[str] = None, cfg: Optional[ProjectConfig] = None) -> TriSurface:
+        cfg = cfg or self.config
+        s, _ = place_in_cfd_frame(self.raw_surface(rid or cfg.geometry.revision_id), cfg.geometry.transform)
+        return s
+
+    # ------------------------------------------------------------------ staleness
+    def staleness(self) -> dict[str, Any]:
+        """Which pipeline artefacts match the current configuration (BUILD_SPEC §2)."""
+        h = stage_hashes(self.config)
+        mesh = self.db.one("SELECT id, status, created_at FROM mesh_revisions WHERE input_hash = ? AND status = 'completed' "
+                           "ORDER BY created_at DESC LIMIT 1", (h["mesh"],))
+        latest_mesh = self.db.one("SELECT id, input_hash, status FROM mesh_revisions ORDER BY created_at DESC LIMIT 1")
+        run = self.db.one("SELECT id, status FROM runs WHERE solve_hash = ? AND status = 'completed' ORDER BY created_at DESC LIMIT 1",
+                          (h["solve"],))
+        latest_run = self.db.one("SELECT id, solve_hash, status FROM runs ORDER BY created_at DESC LIMIT 1")
+        return {
+            "hashes": h,
+            "mesh": {"current": mesh, "latest": latest_mesh, "stale": bool(latest_mesh) and not mesh},
+            "solve": {"current": run, "latest": latest_run, "stale": bool(latest_run) and not run},
+        }

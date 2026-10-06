@@ -1,0 +1,210 @@
+"""Per-project worker: scheduling, dependency handling, ingestion and study driving.
+
+Runs detached (``python -m aerobench.jobs.worker <project-dir>``) so queued work, studies
+and optimisations continue unattended after the GUI closes.  Exactly one worker per
+project holds ``.worker.lock``; it exits after ``idle_timeout`` seconds without work.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+import time
+import traceback
+from pathlib import Path
+from typing import Any, Callable, Optional
+
+from ..core.fs import atomic_write_text
+from ..core.ids import utc_now_iso
+from ..project.store import Project
+from .manager import JobManager
+from .process import create_time, is_alive, launch_detached, python_executable
+from .spec import JobStatus
+
+LOCK = ".worker.lock"
+TERMINAL = ("completed", "failed", "stopped", "interrupted", "cancelled")
+
+
+def _ingestors() -> dict[str, Callable]:
+    from ..services.mesh import ingest_mesh
+    from ..services.runs import ingest_run
+
+    return {"mesh": lambda p, tid: ingest_mesh(p, tid), "solve": lambda p, tid: ingest_run(p, tid)}
+
+
+def lock_holder(root: Path) -> Optional[dict]:
+    p = Path(root) / LOCK
+    if not p.exists():
+        return None
+    try:
+        d = json.loads(p.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+    return d if is_alive(d.get("pid"), d.get("create_time")) else None
+
+
+def acquire_lock(root: Path) -> bool:
+    p = Path(root) / LOCK
+    holder = lock_holder(root)
+    if holder and holder.get("pid") != os.getpid():
+        return False
+    atomic_write_text(p, json.dumps({"pid": os.getpid(), "create_time": create_time(os.getpid()), "started": utc_now_iso()}))
+    # re-check (best effort against a simultaneous start)
+    time.sleep(0.05)
+    d = json.loads(p.read_text())
+    return d.get("pid") == os.getpid()
+
+
+def release_lock(root: Path) -> None:
+    p = Path(root) / LOCK
+    try:
+        d = json.loads(p.read_text())
+        if d.get("pid") == os.getpid():
+            p.unlink()
+    except (OSError, json.JSONDecodeError):
+        pass
+
+
+class Worker:
+    def __init__(self, project: Project, ctx=None, launch_inline: bool = False):
+        from ..services.context import AppContext
+
+        self.project = project
+        self.ctx = ctx or AppContext()
+        self.jm = JobManager(project)
+        self.launch_inline = launch_inline
+        self.db = project.db
+
+    # ------------------------------------------------------------------ one scheduling pass
+    def tick(self) -> dict[str, Any]:
+        report: dict[str, Any] = {"refreshed": [], "ingested": [], "launched": [], "cancelled": [], "studies": []}
+        for j in self.jm.list(["starting", "running", "stopping"]):
+            new = self.jm.refresh(j["id"])
+            if new.value != j["status"]:
+                report["refreshed"].append(j["id"])
+        ing = _ingestors()
+        for j in self.db.all("SELECT * FROM jobs WHERE ingested = 0 AND status IN ('completed','failed','stopped','interrupted') ORDER BY ended_at"):
+            fn = ing.get(j["kind"])
+            try:
+                if fn and j["target_id"]:
+                    fn(self.project, j["target_id"])
+                self.db.update("jobs", "id", j["id"], {"ingested": 1})
+                report["ingested"].append(j["id"])
+            except Exception:  # noqa: BLE001 — never let one bad result stop the queue
+                self.db.update("jobs", "id", j["id"], {"ingested": 1, "message": "ingestion error: " + traceback.format_exc()[-1500:]})
+                self.db.log_event("ingest_error", j["id"], error=traceback.format_exc()[-3000:])
+        try:
+            from ..studies.driver import drive_all
+
+            report["studies"] = drive_all(self.project, self.ctx)
+        except ImportError:
+            pass
+        except Exception:  # noqa: BLE001
+            self.db.log_event("study_driver_error", None, error=traceback.format_exc()[-3000:])
+        self._schedule(report)
+        return report
+
+    def _dependency_state(self, dep_id: Optional[str]) -> str:
+        """'ok' | 'wait' | 'failed'"""
+        if not dep_id:
+            return "ok"
+        d = self.db.one("SELECT * FROM jobs WHERE id = ?", (dep_id,))
+        if d is None:
+            return "failed"
+        if d["status"] in ("failed", "stopped", "interrupted", "cancelled"):
+            return "failed"
+        if d["status"] != "completed" or not d["ingested"]:
+            return "wait"
+        if d["kind"] == "mesh":
+            m = self.db.one("SELECT status FROM mesh_revisions WHERE id = ?", (d["target_id"],))
+            if not m or m["status"] != "completed":
+                return "failed"
+        return "ok"
+
+    def _schedule(self, report: dict) -> None:
+        busy = sum(j["cores"] for j in self.jm.list(["starting", "running", "stopping"]))
+        budget = self.ctx.max_cores() - busy
+        for j in self.db.all("SELECT * FROM jobs WHERE status = 'queued' ORDER BY priority DESC, created_at"):
+            dep = self._dependency_state(j["depends_on"])
+            if dep == "failed":
+                self.db.update("jobs", "id", j["id"], {"status": "cancelled", "ended_at": utc_now_iso(),
+                                                       "message": f"Cancelled: prerequisite job {j['depends_on']} did not complete successfully."})
+                if j["kind"] == "solve" and j["target_id"]:
+                    from ..core.errors import Diagnostic, ErrorCategory
+
+                    self.db.update("runs", "id", j["target_id"], {"status": "failed", "diagnostics_json": [Diagnostic(
+                        code="mesh.failed", category=ErrorCategory.MESH, summary="Meshing failed, so the run could not start.",
+                        action="Open the Mesh page for the meshing diagnostics.").model_dump(mode="json")]})
+                report["cancelled"].append(j["id"])
+                continue
+            if dep == "wait":
+                continue
+            if j["cores"] > budget and busy > 0:
+                continue  # wait for cores; never oversubscribe (a lone oversized job may run alone)
+            self.jm.launch(j["id"], inline=self.launch_inline)
+            if j["target_kind"] == "run":
+                self.db.update("runs", "id", j["target_id"], {"status": "running"})
+            elif j["target_kind"] == "mesh":
+                self.db.update("mesh_revisions", "id", j["target_id"], {"status": "running"})
+            report["launched"].append(j["id"])
+            budget -= j["cores"]
+            busy += j["cores"]
+            if self.launch_inline:
+                # inline mode runs to completion synchronously; ingest promptly on next tick
+                pass
+
+    def has_work(self) -> bool:
+        active = self.db.one("SELECT COUNT(*) AS n FROM jobs WHERE status IN ('queued','starting','running','stopping') OR "
+                             "(ingested = 0 AND status IN ('completed','failed','stopped','interrupted'))")["n"]
+        studies = self.db.one("SELECT COUNT(*) AS n FROM studies WHERE status = 'running'")["n"]
+        return bool(active or studies)
+
+    def run_until_idle(self, poll: float = 2.0, idle_timeout: float = 300.0, max_seconds: Optional[float] = None) -> None:
+        start = time.time()
+        idle_since: Optional[float] = None
+        while True:
+            self.tick()
+            if self.has_work():
+                idle_since = None
+            else:
+                idle_since = idle_since or time.time()
+                if time.time() - idle_since >= idle_timeout:
+                    return
+            if max_seconds is not None and time.time() - start > max_seconds:
+                return
+            time.sleep(poll)
+
+
+def ensure_worker_process(root: Path) -> Optional[int]:
+    """Start a detached worker for ``root`` unless one is alive.  Returns its PID (if started)."""
+    if lock_holder(root):
+        return None
+    env = dict(os.environ)
+    pkg_root = str(Path(__file__).resolve().parents[2])
+    env["PYTHONPATH"] = pkg_root + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    log = Path(root) / "jobs" / "worker.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    proc = launch_detached([python_executable(), "-m", "aerobench.jobs.worker", str(root)], cwd=str(root), log_path=str(log), env=env)
+    return proc.pid
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    argv = argv if argv is not None else sys.argv[1:]
+    root = Path(argv[0])
+    if not acquire_lock(root):
+        print("another worker holds the lock", file=sys.stderr)
+        return 0
+    try:
+        from ..services.context import AppContext
+
+        ctx = AppContext()
+        project = Project.open(root)
+        Worker(project, ctx).run_until_idle(idle_timeout=float(ctx.settings.worker_idle_timeout_s))
+        return 0
+    finally:
+        release_lock(root)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

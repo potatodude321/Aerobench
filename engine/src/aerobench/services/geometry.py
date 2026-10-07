@@ -16,7 +16,7 @@ from ..domain.vehicle import VehicleCategory
 from ..geometry import repair as repair_mod
 from ..geometry.components import identify_components
 from ..geometry.frontal_area import projected_area
-from ..geometry.inspect import UNIT_CANDIDATES, inspect_surface
+from ..geometry.inspect import UNIT_CANDIDATES, inspect_surface, with_units
 from ..geometry.io import read_surface
 from ..geometry.pose import posed_components
 from ..geometry.trisurface import TriSurface
@@ -48,7 +48,7 @@ def import_geometry(
             auto_applied = True
     if chosen not in UNIT_CANDIDATES:
         raise AeroBenchError.make("geometry.units_unknown", ErrorCategory.GEOMETRY, f"Unknown unit '{chosen}'.")
-    report = inspect_surface(raw, units_assumed=chosen)
+    report = with_units(report, chosen)
     rid = project.add_geometry_revision(
         raw, kind="baseline", source_filename=path.name, source_bytes=path.read_bytes(), report=report.as_dict(),
         label=label or path.name, units=chosen,
@@ -135,6 +135,13 @@ def refresh_derived(project: Project, resolution: int = 1000) -> dict[str, Any]:
         rows = np.arange(pa.mask.shape[1]) * h + v0 + 0.5 * h
         area = float(pa.mask[:, rows > z0].sum()) * h * h
     wb = cfg.vehicle.wheelbase
+    changes: list[str] = []
+    if wb is not None and wb <= 0:
+        # front wheels behind the rear ones: the wheel positions do not match the vehicle's
+        # orientation (edited by hand, or the nose direction changed); never use a negative length
+        changes.append("The front wheels are not ahead of the rear wheels; check the nose direction and the wheel "
+                       "positions. The vehicle length is used as reference length meanwhile.")
+        wb = None
     L = float(hi[0] - lo[0])
     out = {
         "bbox_min": lo.tolist(), "bbox_max": hi.tolist(), "length": L, "width": float(hi[1] - lo[1]),
@@ -142,7 +149,6 @@ def refresh_derived(project: Project, resolution: int = 1000) -> dict[str, Any]:
         "frontal_area_uncertainty": pa.uncertainty, "frontal_area_pixel": pa.pixel_size, "wheelbase": wb,
         "body_clearance": ext["clearance"], "component_areas": ext["areas"],
     }
-    changes: list[str] = []
 
     def mutate(c: ProjectConfig) -> None:
         c.geometry.summary = GeometrySummary(
@@ -166,7 +172,7 @@ def refresh_derived(project: Project, resolution: int = 1000) -> dict[str, Any]:
             else:
                 ref.length = L
                 ref.length_source = "vehicle_length"
-        if ref.moment_centre_source == MomentCentreSource.WHEELBASE_MID_GROUND and c.vehicle.wheelbase_mid_ground(z0):
+        if ref.moment_centre_source == MomentCentreSource.WHEELBASE_MID_GROUND and wb and c.vehicle.wheelbase_mid_ground(z0):
             ref.moment_centre = c.vehicle.wheelbase_mid_ground(z0)
         elif ref.moment_centre_source != MomentCentreSource.MANUAL or ref.moment_centre is None:
             ref.moment_centre = (float(0.5 * (lo[0] + hi[0])), c.vehicle.centreline_y, float(z0))

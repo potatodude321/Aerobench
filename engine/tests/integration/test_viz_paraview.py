@@ -62,3 +62,39 @@ def test_expert_script(solved, viz):
     s = viz.expert_script(p, res["run_id"], ["cp_body", "rear_wake"])
     assert "OpenFOAMReader" in s and "Slice" in s
     compile(s, "script", "exec")
+
+
+def test_mesh_viewer_on_the_generated_mesh(solved, viz):
+    """Mesh inspection after meshing: the real cell faces of the vehicle and ground, and a cut
+    through the volume mesh coloured by refinement level."""
+    p, res = solved
+    from aerobench.services.runs import run_record
+
+    mesh_id = run_record(p, res["run_id"])["mesh_revision_id"]
+    view = viz.mesh_view(p, mesh_id)
+    assert view["patches"]["vehicle"] and view["patches"]["ground"] == ["ground"]
+    assert {"inlet", "outlet"} <= set(view["patches"]["domain"])
+    plan = view["plan"]
+    assert plan and plan["base_cell"] > 0
+
+    out = viz.mesh_extract(p, mesh_id, "mesh_patches", {"patches": view["patches"]["vehicle"]})
+    hdr, a = unpack(viz.payload_path(p, mesh_id, out["key"]).read_bytes())
+    n = hdr["n_points"]
+    assert hdr["n_faces"] > 100 and a["indices"].max() < n and a["edges"].max() < n
+    # a closed polygonal surface has about twice as many edges as (mostly quad) faces
+    assert 1.2 * hdr["n_faces"] < hdr["n_edges"] < 3.5 * hdr["n_faces"]
+    # the snapped surface lies on the vehicle: its bounding box matches the posed geometry's
+    pts = a["positions"].reshape(-1, 3)
+    vb_lo, vb_hi = np.array(plan["vehicle_bbox_min"]), np.array(plan["vehicle_bbox_max"])
+    assert np.all(pts.min(axis=0) > vb_lo - 0.1) and np.all(pts.max(axis=0) < vb_hi + 0.1)
+
+    y0 = 0.5 * (plan["domain_min"][1] + plan["domain_max"][1])
+    cut = viz.mesh_extract(p, mesh_id, "mesh_slice", {"origin": [2.0, y0, 0.5], "normal": [0, 1, 0]})
+    hdr, a = unpack(viz.payload_path(p, mesh_id, cut["key"]).read_bytes())
+    levels = set(np.unique(a["scalars"]).astype(int).tolist())
+    # background cells and refined cells near the car both appear
+    assert 0 in levels and max(levels) >= 3, levels
+    assert hdr["n_cells"] > 200 and a["edges"].max() < hdr["n_points"]
+    # all cut points lie in the plane
+    assert np.allclose(a["positions"].reshape(-1, 3)[:, 1], y0, atol=1e-4)
+    assert viz.mesh_extract(p, mesh_id, "mesh_slice", {"origin": [2.0, y0, 0.5], "normal": [0, 1, 0]})["cached"]

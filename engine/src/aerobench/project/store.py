@@ -182,9 +182,17 @@ class Project:
     # ------------------------------------------------------------------ geometry blobs
     @staticmethod
     def _surface_bytes(surf: TriSurface) -> bytes:
+        # an .npz (readable by np.load) written with fast deflate: level 1 is several times
+        # quicker than numpy's default on large meshes and the files are barely larger
+        import zipfile
+
         buf = io.BytesIO()
-        np.savez_compressed(buf, points=surf.points.astype(np.float64), faces=surf.faces.astype(np.int64),
-                            regions=surf.regions.astype(np.int32), names=np.array(json.dumps(surf.region_names)))
+        arrays = {"points": surf.points.astype(np.float64), "faces": surf.faces.astype(np.int64),
+                  "regions": surf.regions.astype(np.int32), "names": np.array(json.dumps(surf.region_names))}
+        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=1) as zf:
+            for key, arr in arrays.items():
+                with zf.open(f"{key}.npy", "w", force_zip64=True) as fh:
+                    np.lib.format.write_array(fh, np.asanyarray(arr), allow_pickle=False)
         return buf.getvalue()
 
     @staticmethod

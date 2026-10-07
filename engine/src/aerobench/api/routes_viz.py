@@ -44,6 +44,21 @@ def payload(pid: str, run_id: str, key: str, e: EngineState = Depends(engine)):
     return FileResponse(e.viz.payload_path(e.projects.get(pid), run_id, key), media_type="application/octet-stream")
 
 
+@router.get("/meshes/{mesh_id}/view")
+def mesh_view(pid: str, mesh_id: str, e: EngineState = Depends(engine)):
+    return e.viz.mesh_view(e.projects.get(pid), mesh_id)
+
+
+@router.post("/meshes/{mesh_id}/viz/extract")
+def mesh_extract(pid: str, mesh_id: str, body: ExtractBody, e: EngineState = Depends(engine)):
+    return e.viz.mesh_extract(e.projects.get(pid), mesh_id, body.op, body.params)
+
+
+@router.get("/meshes/{mesh_id}/viz/payload/{key}")
+def mesh_payload(pid: str, mesh_id: str, key: str, e: EngineState = Depends(engine)):
+    return FileResponse(e.viz.payload_path(e.projects.get(pid), mesh_id, key), media_type="application/octet-stream")
+
+
 class LineBody(BaseModel):
     p1: list[float]
     p2: list[float]

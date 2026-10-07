@@ -52,6 +52,7 @@ sys.stdout = sys.stderr
 from paraview import servermanager as sm  # noqa: E402
 from paraview.simple import (  # noqa: E402
     Calculator,
+    CellSize,
     Clip,
     ColorBy,
     Contour,
@@ -84,7 +85,8 @@ def _pad4(b):
     return b + b"\0" * ((-len(b)) % 4)
 
 
-def write_abg(path, positions, indices=None, lines=None, scalars=None, vectors=None, part_ids=None, part_names=None, meta=None):
+def write_abg(path, positions, indices=None, lines=None, scalars=None, vectors=None, part_ids=None, part_names=None, meta=None,
+              edges=None):
     blocks, data = [], []
 
     def add(name, arr, dtype):
@@ -97,6 +99,8 @@ def write_abg(path, positions, indices=None, lines=None, scalars=None, vectors=N
         add("indices", indices, "<u4")
     if lines is not None:
         add("lines", lines, "<u4")
+    if edges is not None:
+        add("edges", edges, "<u4")
     if scalars is not None:
         add("scalars", scalars, "<f4")
     if vectors is not None:
@@ -444,6 +448,113 @@ def op_probe(p):
     return {"probes": res}
 
 
+# ------------------------------------------------------------------------------ mesh inspection
+
+
+def _polys(pd):
+    """(points, offsets, connectivity) of the polygons of a vtkPolyData (VTK 9 cell arrays)."""
+    pts = vtk_to_numpy(pd.GetPoints().GetData()).astype(np.float32) if pd.GetPoints() else np.zeros((0, 3), np.float32)
+    polys = pd.GetPolys()
+    if polys is None or polys.GetNumberOfCells() == 0:
+        return pts, np.zeros(1, np.int64), np.zeros(0, np.int64)
+    off = vtk_to_numpy(polys.GetOffsetsArray()).astype(np.int64)
+    conn = vtk_to_numpy(polys.GetConnectivityArray()).astype(np.int64)
+    return pts, off, conn
+
+
+def _fan(off):
+    """Fan triangulation of polygons, in corner-index space (corner k = conn[k])."""
+    n = np.diff(off)
+    nt = np.clip(n - 2, 0, None)
+    poly = np.repeat(np.arange(len(n)), nt)
+    k = np.arange(nt.sum()) - np.repeat(np.cumsum(nt) - nt, nt) + 1
+    base = off[:-1][poly]
+    return np.stack([base, base + k, base + k + 1], axis=1), poly
+
+
+def _corner_edges(off, conn):
+    """Unique polygon edges as pairs of corner indices (each geometric edge once)."""
+    n = np.diff(off)
+    idx = np.arange(len(conn))
+    nxt = idx + 1
+    ends = off[1:] - 1
+    nxt[ends[n > 0]] = off[:-1][n > 0]
+    a, b = conn[idx], conn[nxt]
+    lo, hi = np.minimum(a, b), np.maximum(a, b)
+    key = lo * (int(conn.max()) + 1 if len(conn) else 1) + hi
+    _, first = np.unique(key, return_index=True)
+    return np.stack([idx[first], nxt[first]], axis=1)
+
+
+def op_mesh_patches(p):
+    """Surface mesh of boundary patches: the actual cell faces (not the CAD triangles),
+    with every face edge, for 'surface with edges' and wireframe views."""
+    src = MergeBlocks(Input=S.surfaces(p["patches"]))
+    pd = _fetch_polydata(ExtractSurface(Input=src))
+    pts, off, conn = _polys(pd)
+    if len(conn) == 0:
+        raise RuntimeError("the mesh has no faces on the requested patches")
+    tri, _ = _fan(off)
+    edges = _corner_edges(off, conn)
+    # shared points (flat shading needs no per-face copies)
+    return write_abg(p["out"], pts, indices=conn[tri], edges=conn[edges],
+                     meta={"kind": "mesh_patches", "patches": p["patches"], "n_faces": int(len(off) - 1),
+                           "n_edges": int(len(edges))})
+
+
+def op_mesh_slice(p):
+    """Cut through the volume mesh. Each cut cell becomes one polygon coloured by its
+    refinement level, estimated from the cell volume (level = log2(background cell / cbrt V)),
+    so the picture can be compared directly with the refinement boxes."""
+    cs = CellSize(Input=S.internal())
+    for prop, val in (("ComputeVertexCount", 0), ("ComputeLength", 0), ("ComputeArea", 0), ("ComputeVolume", 1),
+                      ("ComputeSum", 0)):
+        try:
+            setattr(cs, prop, val)
+        except AttributeError:
+            pass
+    sl = Slice(Input=cs)
+    sl.SliceType = "Plane"
+    sl.SliceType.Origin = p["origin"]
+    sl.SliceType.Normal = p["normal"]
+    sl.Triangulatetheslice = 0
+    pd = _fetch_polydata(ExtractSurface(Input=MergeBlocks(Input=sl)))
+    pts, off, conn = _polys(pd)
+    if len(conn) == 0:
+        raise RuntimeError("the cut plane does not intersect the mesh")
+    vol_arr = pd.GetCellData().GetArray("Volume")
+    npoly = len(off) - 1
+    vol = np.abs(vtk_to_numpy(vol_arr).astype(float)) if vol_arr is not None else np.full(npoly, np.nan)
+    if p.get("clip_box"):
+        lo, hi = np.asarray(p["clip_box"][0]), np.asarray(p["clip_box"][1])
+        n = np.diff(off)
+        cen = np.add.reduceat(pts[conn].astype(float), off[:-1], axis=0) / np.maximum(n, 1)[:, None]
+        keep = np.all((cen >= lo) & (cen <= hi), axis=1) & (n > 0)
+        sel = np.flatnonzero(keep)
+        counts = n[sel]
+        new_off = np.concatenate([[0], np.cumsum(counts)])
+        starts = off[:-1][sel]
+        gather = np.repeat(starts - new_off[:-1], counts) + np.arange(new_off[-1])
+        conn, off, vol = conn[gather], new_off, vol[sel]
+        npoly = len(sel)
+        if npoly == 0:
+            raise RuntimeError("no mesh cells inside the requested region")
+    base = float(p.get("base_cell") or 0.0)
+    size = np.cbrt(vol)
+    if base > 0:
+        level = np.round(np.log2(base / np.maximum(size, 1e-30)))
+        level = np.clip(np.where(np.isfinite(level), level, 0.0), 0, 15)
+    else:
+        level = size
+    tri, tri_poly = _fan(off)
+    corner_poly = np.repeat(np.arange(npoly), np.diff(off))
+    edges = _corner_edges(off, conn)
+    return write_abg(p["out"], pts[conn], indices=tri, edges=edges, scalars=level[corner_poly],
+                     meta={"kind": "mesh_slice", "origin": p["origin"], "normal": p["normal"], "n_cells": int(npoly),
+                           "scalar": "level" if base > 0 else "cell_size", "base_cell": base,
+                           "levels": sorted({int(x) for x in np.unique(level)}) if base > 0 else None})
+
+
 def op_screenshot(p):
     """Render a scene with ParaView (reports / thumbnails)."""
     view = CreateRenderView()
@@ -458,7 +569,7 @@ def op_screenshot(p):
         kind = item["kind"]
         if kind == "surface":
             # dedicated reader per surface item so several surface items can coexist
-            rd = S._new_reader(S.case)
+            rd = S._new_reader(S.case, S.case_type)
             rd.MeshRegions = ["patch/" + x for x in item["patches"]]
             src, fname = _derived(rd, item["field"])
             src = MergeBlocks(Input=src)
@@ -527,6 +638,8 @@ OPS = {
     "line_sample": op_line_sample,
     "probe": op_probe,
     "screenshot": op_screenshot,
+    "mesh_patches": op_mesh_patches,
+    "mesh_slice": op_mesh_slice,
 }
 
 

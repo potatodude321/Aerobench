@@ -17,6 +17,7 @@ from .context import AppContext
 from .runs import run_record
 
 OPS = {"surface", "slice", "streamlines", "isosurface"}
+MESH_OPS = {"mesh_patches", "mesh_slice"}
 
 
 def _times(d: Path) -> list[float]:
@@ -110,6 +111,93 @@ class VizService:
         header = sc.request(op, out=str(out), **params)
         return {"key": key, "header": header, "cached": False}
 
+    # ------------------------------------------------------------------ generated mesh
+    def _mesh_row(self, project: Project, mesh_id: str) -> dict[str, Any]:
+        row = dec(project.db.one("SELECT * FROM mesh_revisions WHERE id = ?", (check_id(mesh_id, "mesh id"),)))
+        if row is None:
+            raise AeroBenchError.make("mesh.unknown", ErrorCategory.PROJECT, f"Unknown mesh {mesh_id}.")
+        return row
+
+    @staticmethod
+    def _mesh_signature(mdir: Path) -> str:
+        """Changes whenever the mesh files change (re-meshing into the same folder never
+        happens, but a cache must never show a different mesh)."""
+        pm = mdir / "constant" / "polyMesh"
+        parts = []
+        for name in ("points", "faces", "owner", "neighbour", "boundary"):
+            for cand in (pm / name, pm / f"{name}.gz"):
+                if cand.exists():
+                    st = cand.stat()
+                    parts.append(f"{cand.name}:{st.st_size}:{st.st_mtime_ns}")
+        return sha256_json(parts)[:16]
+
+    def mesh_view(self, project: Project, mesh_id: str) -> dict[str, Any]:
+        """What the mesh viewer can show for a generated mesh: patch groups, refinement plan
+        (as used for this mesh, not the current settings), domain."""
+        row = self._mesh_row(project, mesh_id)
+        mdir = project.root / row["path"]
+        has_mesh = (mdir / "constant" / "polyMesh" / "owner").exists() or (mdir / "constant" / "polyMesh" / "owner.gz").exists()
+        if row["status"] in ("queued", "starting", "running") or not has_mesh:
+            raise AeroBenchError.make("mesh.not_viewable", ErrorCategory.VISUALISATION,
+                                      "This mesh cannot be shown yet.",
+                                      likely_cause="Meshing has not finished (or did not produce a mesh).",
+                                      action="Wait for meshing to finish, or generate the mesh again.")
+        sc, info = self._mesh_session(project, mesh_id, row)
+        patches = [r.split("/", 1)[1] for r in info.get("regions", []) if r.startswith("patch/")]
+        cfg = ProjectConfig.model_validate(row["config_snapshot"]) if row.get("config_snapshot") else None
+        comp_ids = {c.id for c in cfg.geometry.components} if cfg else set()
+        vehicle = [x for x in patches if x in comp_ids]
+        ground = [x for x in patches if x == "ground"]
+        domain = [x for x in patches if x not in vehicle and x not in ground]
+        if not vehicle:  # older meshes / unexpected naming: everything that is not the tunnel
+            vehicle = [x for x in domain if x not in ("inlet", "outlet", "top", "side_left", "side_right", "symmetry", "front", "back")]
+            domain = [x for x in domain if x not in vehicle]
+        return {"mesh_id": mesh_id, "status": row["status"], "patches": {"vehicle": vehicle, "ground": ground, "domain": domain},
+                "plan": row.get("plan"), "cells": row.get("cells")}
+
+    def _mesh_session(self, project: Project, mesh_id: str, row: Optional[dict[str, Any]] = None):
+        row = row or self._mesh_row(project, mesh_id)
+        mdir = project.root / row["path"]
+        foam = mdir / "case.foam"
+        if not foam.exists():
+            foam.write_text("")
+        sig = self._mesh_signature(mdir)
+        key = f"{project.root}:mesh:{mesh_id}"
+        sc = self.pool().get(key)
+        if sc.case != str(foam) or getattr(sc, "signature", None) != sig:
+            sc.info = sc.request("open_case", foam_file=str(foam))  # type: ignore[attr-defined]
+            sc.case = str(foam)
+            sc.signature = sig  # type: ignore[attr-defined]
+        return sc, sc.info  # type: ignore[attr-defined]
+
+    def mesh_extract(self, project: Project, mesh_id: str, op: str, params: dict[str, Any]) -> dict[str, Any]:
+        if op not in MESH_OPS:
+            raise AeroBenchError.make("visualisation.bad_op", ErrorCategory.VISUALISATION, f"Unknown mesh view '{op}'.")
+        row = self._mesh_row(project, mesh_id)
+        mdir = project.root / row["path"]
+        params = dict(params)
+        if op == "mesh_slice":
+            plan = row.get("plan") or {}
+            params["base_cell"] = float(plan.get("base_cell") or 0.0)
+            try:
+                params["origin"] = [float(x) for x in params["origin"]]
+                params["normal"] = [float(x) for x in params["normal"]]
+            except (KeyError, TypeError, ValueError):
+                raise AeroBenchError.make("visualisation.bad_params", ErrorCategory.VISUALISATION,
+                                          "A cut plane needs an origin and a normal.") from None
+        elif op == "mesh_patches":
+            if not params.get("patches"):
+                raise AeroBenchError.make("visualisation.bad_params", ErrorCategory.VISUALISATION, "No patches selected.")
+        key = sha256_json({"mesh": mesh_id, "sig": self._mesh_signature(mdir), "op": op, "params": params, "v": 1})[:24]
+        out = project.cache_dir("viz", mesh_id) / f"{key}.abg"
+        if out.exists():
+            from ..viz.payload import read_header
+
+            return {"key": key, "header": read_header(out), "cached": True}
+        sc, _ = self._mesh_session(project, mesh_id, row)
+        header = sc.request(op, out=str(out), **params)
+        return {"key": key, "header": header, "cached": False}
+
     def paraview_gui_script(self, project: Project, run_id: str) -> Path:
         """A script for the ParaView *GUI* (``paraview --script=``) that opens this run the way
         AeroBench reads it: decomposed results when the run was not reconstructed, latest
@@ -153,7 +241,7 @@ class VizService:
     def payload_path(self, project: Project, run_id: str, key: str) -> Path:
         if not key.isalnum():
             raise AeroBenchError.make("visualisation.bad_key", ErrorCategory.VISUALISATION, "Invalid payload key.")
-        p = project.root / "cache" / "viz" / check_id(run_id, "run id") / f"{key}.abg"
+        p = project.root / "cache" / "viz" / check_id(run_id, "run or mesh id") / f"{key}.abg"
         if not p.exists():
             raise AeroBenchError.make("visualisation.payload_missing", ErrorCategory.VISUALISATION, "Visualisation payload not found.")
         return p

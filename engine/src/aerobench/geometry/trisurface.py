@@ -52,7 +52,9 @@ class TriSurface:
         if self.n_faces == 0:
             z = np.zeros(3)
             return z, z
-        used = self.points[np.unique(self.faces)]
+        used_mask = np.zeros(len(self.points), bool)
+        used_mask[self.faces.reshape(-1)] = True
+        used = self.points[used_mask]
         return used.min(axis=0), used.max(axis=0)
 
     def triangles(self) -> np.ndarray:
@@ -157,7 +159,9 @@ class TriSurface:
         """Unique undirected edges (E, 2) and, for each face-edge (3M), its unique edge index."""
         e = np.concatenate([self.faces[:, [0, 1]], self.faces[:, [1, 2]], self.faces[:, [2, 0]]])
         es = np.sort(e, axis=1)
-        uniq, inv = np.unique(es, axis=0, return_inverse=True)
+        from .fastops import unique_int_rows
+
+        uniq, inv = unique_int_rows(es, return_inverse=True)
         return uniq, inv.reshape(-1)
 
     def compact(self) -> "TriSurface":

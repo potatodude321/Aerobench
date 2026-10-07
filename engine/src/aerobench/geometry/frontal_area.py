@@ -62,48 +62,59 @@ def projected_area(
     nx = int(np.ceil(span[0] / h)) + 2
     ny = int(np.ceil(span[1] / h)) + 2
     origin = lo - h
-    mask = np.zeros((nx, ny), bool)
 
     Q = (P - origin) / h  # pixel coordinates; pixel (i,j) centre at (i+0.5, j+0.5)
     a, b, c = Q[:, 0], Q[:, 1], Q[:, 2]
     area2 = (b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1]) - (b[:, 1] - a[:, 1]) * (c[:, 0] - a[:, 0])
     keep = np.abs(area2) > 1e-12
     a, b, c = a[keep], b[keep], c[keep]
-    i0 = np.floor(np.minimum(np.minimum(a[:, 0], b[:, 0]), c[:, 0]) - 0.5).astype(int).clip(0, nx - 1)
-    i1 = np.ceil(np.maximum(np.maximum(a[:, 0], b[:, 0]), c[:, 0]) - 0.5).astype(int).clip(0, nx - 1)
-    j0 = np.floor(np.minimum(np.minimum(a[:, 1], b[:, 1]), c[:, 1]) - 0.5).astype(int).clip(0, ny - 1)
-    j1 = np.ceil(np.maximum(np.maximum(a[:, 1], b[:, 1]), c[:, 1]) - 0.5).astype(int).clip(0, ny - 1)
-    wi = i1 - i0 + 1
-    wj = j1 - j0 + 1
-    cnt = wi * wj
-
-    def edge(p, q, x, y):
-        return (q[..., 0] - p[..., 0]) * (y - p[..., 1]) - (q[..., 1] - p[..., 1]) * (x - p[..., 0])
-
-    # process in batches by expanding candidate pixels
-    order = np.argsort(cnt)
+    # Scanline fill: for every (triangle, pixel row) pair the covered pixel centres form one
+    # interval, found from the triangle's edge crossings at the row's centre line. Spans are
+    # accumulated with a difference array, so the cost scales with the number of rows a
+    # triangle spans, not its pixel area (large panels used to dominate the run time).
+    ymin = np.minimum(np.minimum(a[:, 1], b[:, 1]), c[:, 1])
+    ymax = np.maximum(np.maximum(a[:, 1], b[:, 1]), c[:, 1])
+    j0 = np.ceil(ymin - 0.5).astype(np.int64).clip(0, ny - 1)
+    j1 = np.floor(ymax - 0.5).astype(np.int64).clip(-1, ny - 1)
+    rows = (j1 - j0 + 1).clip(0)
+    cov = np.zeros((nx + 1) * ny, np.int64)
+    budget = 8_000_000
+    order = np.arange(len(rows))
+    csum = np.cumsum(rows)
     start = 0
-    budget = 4_000_000
     while start < len(order):
-        tot = 0
-        end = start
-        while end < len(order) and (tot + cnt[order[end]] <= budget or end == start):
-            tot += cnt[order[end]]
-            end += 1
+        # batches of triangles with at most `budget` (triangle, row) pairs
+        base = csum[start - 1] if start else 0
+        end = int(np.searchsorted(csum, base + budget, side="right"))
+        end = max(end, start + 1)
         sel = order[start:end]
         start = end
-        rep = cnt[sel]
+        rep = rows[sel]
+        if rep.sum() == 0:
+            continue
         tid = np.repeat(sel, rep)
         local = np.arange(rep.sum()) - np.repeat(np.cumsum(rep) - rep, rep)
-        ii = i0[tid] + local // wj[tid]
-        jj = j0[tid] + local % wj[tid]
-        x = ii + 0.5
-        y = jj + 0.5
-        e0 = edge(a[tid], b[tid], x, y)
-        e1 = edge(b[tid], c[tid], x, y)
-        e2 = edge(c[tid], a[tid], x, y)
-        inside = ((e0 >= 0) & (e1 >= 0) & (e2 >= 0)) | ((e0 <= 0) & (e1 <= 0) & (e2 <= 0))
-        mask[ii[inside], jj[inside]] = True
+        jj = j0[tid] + local
+        yc = jj + 0.5
+        xlo = np.full(len(tid), np.inf)
+        xhi = np.full(len(tid), -np.inf)
+        for p, q in ((a, b), (b, c), (c, a)):
+            py, qy = p[tid, 1], q[tid, 1]
+            px, qx = p[tid, 0], q[tid, 0]
+            dy = qy - py
+            hit = ((yc - py) * (yc - qy) <= 0) & (dy != 0)
+            x = np.where(hit, px + (yc - py) * (qx - px) / np.where(dy != 0, dy, 1.0), np.nan)
+            xlo = np.where(hit, np.minimum(xlo, x), xlo)
+            xhi = np.where(hit, np.maximum(xhi, x), xhi)
+        ok = np.isfinite(xlo) & np.isfinite(xhi)
+        i_s = np.ceil(xlo[ok] - 0.5).astype(np.int64).clip(0, nx)
+        i_e = np.floor(xhi[ok] - 0.5).astype(np.int64).clip(-1, nx - 1)
+        jj = jj[ok]
+        good = i_s <= i_e
+        i_s, i_e, jj = i_s[good], i_e[good], jj[good]
+        cov += np.bincount(i_s * ny + jj, minlength=cov.size)
+        cov -= np.bincount((i_e + 1) * ny + jj, minlength=cov.size)
+    mask = np.cumsum(cov.reshape(nx + 1, ny), axis=0)[:nx] > 0
 
     filled = int(mask.sum())
     # perimeter pixels: filled pixels with at least one empty 4-neighbour

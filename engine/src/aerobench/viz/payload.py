@@ -12,6 +12,7 @@ Layout (little endian)::
         scalars   float32[n_points]    (optional)
         vectors   float32[n_points*3]  (optional)
         part_ids  uint16[n_tri]        (optional, padded)
+        edges     uint32[n_edges*2]    (optional: wireframe line pairs, mesh views)
 
 The renderer reads it with typed-array views — no parsing in JavaScript.
 """

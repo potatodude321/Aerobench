@@ -11,6 +11,7 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 
 from ..core.errors import Diagnostic, ErrorCategory, Severity
+from .fastops import unique_int_rows
 from .trisurface import TriSurface
 
 UNIT_CANDIDATES = {"m": 1.0, "mm": 1e-3, "cm": 1e-2, "in": 0.0254, "ft": 0.3048}
@@ -70,7 +71,7 @@ def edge_topology(surf: TriSurface):
     f = surf.faces
     e_dir = np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]])  # directed, 3M
     e_sorted = np.sort(e_dir, axis=1)
-    uniq, inv, counts = np.unique(e_sorted, axis=0, return_inverse=True, return_counts=True)
+    uniq, inv, counts = unique_int_rows(e_sorted, return_inverse=True, return_counts=True)
     inv = inv.reshape(-1)
     # orientation: for an edge shared by exactly two faces, directions must be opposite
     forward = (e_dir[:, 0] < e_dir[:, 1]).astype(np.int64)  # 1 if stored as (lo, hi)
@@ -154,6 +155,67 @@ def suggest_units(length_raw: float) -> list[UnitSuggestion]:
     return sorted(out, key=score)
 
 
+def _component_infos(surf: TriSurface, labels: np.ndarray, ncomp: int, areas: np.ndarray,
+                     open_faces: np.ndarray) -> list[ComponentInfo]:
+    """Per connected component statistics in O(faces) (CAD exports can have thousands of
+    shells; a per-component pass over all faces would be quadratic)."""
+    if ncomp == 0:
+        return []
+    labels = np.asarray(labels, np.int64)
+    n_faces = np.bincount(labels, minlength=ncomp)
+    area = np.bincount(labels, weights=areas, minlength=ncomp)
+    is_open = np.bincount(labels, weights=open_faces.astype(np.float64), minlength=ncomp) > 0
+    t = surf.triangles()
+    vol = np.einsum("ij,ij->i", t[:, 0], np.cross(t[:, 1], t[:, 2])) / 6.0
+    volume = np.bincount(labels, weights=vol, minlength=ncomp)
+    order = np.argsort(labels, kind="stable")
+    starts = np.searchsorted(labels[order], np.arange(ncomp))
+    tmin = t.min(axis=1)[order]
+    tmax = t.max(axis=1)[order]
+    bmin = np.minimum.reduceat(tmin, starts, axis=0)
+    bmax = np.maximum.reduceat(tmax, starts, axis=0)
+    pairs = unique_int_rows(np.stack([labels, surf.regions.astype(np.int64)], axis=1)) if surf.n_faces else np.zeros((0, 2), int)
+    regs: list[list[str]] = [[] for _ in range(ncomp)]
+    for c, r in pairs:
+        regs[int(c)].append(surf.region_names[int(r)])
+    return [
+        ComponentInfo(index=c, n_faces=int(n_faces[c]), area=float(area[c]), bbox_min=bmin[c].tolist(),
+                      bbox_max=bmax[c].tolist(), closed=not bool(is_open[c]), signed_volume=float(volume[c]),
+                      regions=sorted(set(regs[c])))
+        for c in range(ncomp)
+    ]
+
+
+def with_units(report: GeometryReport, units_assumed: str) -> GeometryReport:
+    """The same report read in other units (only the unit-dependent diagnostic changes), so
+    the expensive topology analysis runs once per import."""
+    import copy
+
+    out = copy.copy(report)
+    out.units_assumed = units_assumed
+    out.diagnostics = [d for d in report.diagnostics if d.code != "geometry.units_suspicious"]
+    if report.n_faces:
+        d = _units_diagnostic(max(report.extents), units_assumed, report.unit_suggestions)
+        if d is not None:
+            out.diagnostics.insert(0, d)
+    return out
+
+
+def _units_diagnostic(L: float, units_assumed: str, units: list[UnitSuggestion]) -> Optional[Diagnostic]:
+    scale = UNIT_CANDIDATES.get(units_assumed, 1.0)
+    L_m = L * scale
+    if 0.2 <= L_m <= 25.0:
+        return None
+    best = units[0]
+    return Diagnostic(
+        code="geometry.units_suspicious", category=ErrorCategory.GEOMETRY, severity=Severity.WARNING,
+        summary=f"The geometry is {L_m:.4g} m long when read as {units_assumed}, which is implausible for a vehicle.",
+        likely_cause="The file was exported in different units.",
+        action=f"Interpret the file as '{best.unit}' (vehicle length {best.resulting_length_m:.3g} m).",
+        context={"suggested_unit": best.unit, "suggested_scale": best.scale},
+    )
+
+
 def inspect_surface(surf: TriSurface, units_assumed: str = "m", length_scale: Optional[float] = None) -> GeometryReport:
     lo, hi = surf.bbox()
     ext = hi - lo
@@ -170,7 +232,7 @@ def inspect_surface(surf: TriSurface, units_assumed: str = "m", length_scale: Op
     n_degen = int(degenerate.sum())
 
     fs = np.sort(surf.faces, axis=1)
-    _, first_idx, dup_counts = np.unique(fs, axis=0, return_index=True, return_counts=True)
+    _, first_idx, dup_counts = unique_int_rows(fs, return_index=True, return_counts=True)
     n_dup = int(surf.n_faces - len(first_idx))
 
     uniq, inv, counts, inconsistent = edge_topology(surf)
@@ -179,28 +241,12 @@ def inspect_surface(surf: TriSurface, units_assumed: str = "m", length_scale: Op
     loops = boundary_loops(surf, uniq, counts)
 
     ncomp, labels = face_components(surf, inv)
-    comps: list[ComponentInfo] = []
     edge_open = counts == 1
     # per-component closedness: any boundary edge whose faces belong to it
     face_of = np.tile(np.arange(surf.n_faces), 3)
     open_faces = np.zeros(surf.n_faces, bool)
     open_faces[face_of[edge_open[inv]]] = True
-    for c in range(ncomp):
-        mask = labels == c
-        sub = surf.points[np.unique(surf.faces[mask])]
-        regs = sorted({surf.region_names[r] for r in np.unique(surf.regions[mask])})
-        comps.append(
-            ComponentInfo(
-                index=c,
-                n_faces=int(mask.sum()),
-                area=float(areas[mask].sum()),
-                bbox_min=sub.min(axis=0).tolist(),
-                bbox_max=sub.max(axis=0).tolist(),
-                closed=not bool(open_faces[mask].any()),
-                signed_volume=surf.signed_volume(mask),
-                regions=regs,
-            )
-        )
+    comps = _component_infos(surf, labels, ncomp, areas, open_faces)
     comps.sort(key=lambda c: -c.area)
     closed = n_boundary == 0 and n_nonmanifold == 0
     outward: Optional[bool] = None
@@ -240,19 +286,9 @@ def inspect_surface(surf: TriSurface, units_assumed: str = "m", length_scale: Op
         add("geometry.empty", Severity.ERROR, "The geometry contains no triangles.")
         report.diagnostics = diag
         return report
-    scale = UNIT_CANDIDATES.get(units_assumed, 1.0)
-    L_m = L * scale
-    if not (0.2 <= L_m <= 25.0):
-        best = units[0]
-        add(
-            "geometry.units_suspicious",
-            Severity.WARNING,
-            f"The geometry is {L_m:.4g} m long when read as {units_assumed}, which is implausible for a vehicle.",
-            "The file was exported in different units.",
-            f"Interpret the file as '{best.unit}' (vehicle length {best.resulting_length_m:.3g} m).",
-            suggested_unit=best.unit,
-            suggested_scale=best.scale,
-        )
+    ud = _units_diagnostic(L, units_assumed, units)
+    if ud is not None:
+        diag.append(ud)
     if n_degen:
         add("geometry.degenerate", Severity.WARNING, f"{n_degen} degenerate (zero-area or sliver) triangles.",
             "Tessellation artefacts from the exporting tool.", "Run Repair → Remove degenerate triangles.", count=n_degen)

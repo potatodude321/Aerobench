@@ -35,6 +35,7 @@ class ParaViewSidecar:
         self.stderr_tail: list[str] = []
         self.startup_timeout = startup_timeout
         self.case: Optional[str] = None
+        self._open_params: Optional[dict] = None
 
     def start(self) -> None:
         if self.proc and self.proc.poll() is None:
@@ -84,16 +85,27 @@ class ParaViewSidecar:
             if msg.get("id") == -1:
                 raise SidecarError("ParaView sidecar exited unexpectedly:\n" + "\n".join(self.stderr_tail[-30:]))
 
+    def _send(self, op: str, params: dict, timeout: float) -> dict:
+        self._id += 1
+        rid = self._id
+        assert self.proc and self.proc.stdin
+        self.proc.stdin.write(json.dumps({"id": rid, "op": op, "params": params}) + "\n")
+        self.proc.stdin.flush()
+        return self._wait(rid, timeout)
+
     def request(self, op: str, timeout: float = 600.0, **params: Any) -> dict:
         with self._lock:
             if self.proc is None or self.proc.poll() is not None:
                 self.start()
-            self._id += 1
-            rid = self._id
-            assert self.proc and self.proc.stdin
-            self.proc.stdin.write(json.dumps({"id": rid, "op": op, "params": params}) + "\n")
-            self.proc.stdin.flush()
-            msg = self._wait(rid, timeout)
+                # a restarted sidecar (crash, or closed by the pool meanwhile) has no case open:
+                # reopen the one its users believe is open before running their request
+                if op != "open_case" and self._open_params is not None:
+                    reopened = self._send("open_case", self._open_params, timeout)
+                    if reopened.get("ok"):
+                        self.case = self._open_params.get("foam_file")
+            msg = self._send(op, params, timeout)
+            if op == "open_case" and msg.get("ok"):
+                self._open_params = dict(params)
         if not msg.get("ok"):
             raise AeroBenchError.make("visualisation.request_failed", ErrorCategory.VISUALISATION,
                                       f"ParaView could not complete '{op}': {msg.get('error')}",

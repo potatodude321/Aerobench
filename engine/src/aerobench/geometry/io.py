@@ -15,6 +15,7 @@ from typing import Optional
 import numpy as np
 
 from ..core.errors import AeroBenchError, ErrorCategory
+from .fastops import weld_float_rows
 from .trisurface import TriSurface
 
 SUPPORTED_MESH_SUFFIXES = {".stl", ".obj", ".ply"}
@@ -93,8 +94,36 @@ def _read_stl_binary(data: bytes, name: str) -> TriSurface:
     return _from_triangle_soup(tri, np.zeros(n, np.int32), [name or "solid"])
 
 
-_VERTEX_RE = re.compile(r"vertex\s+(\S+)\s+(\S+)\s+(\S+)")
+_VERTEX_RE = re.compile(r"vertex\s+(\S+\s+\S+\s+\S+)")
 _SOLID_RE = re.compile(r"^[ \t]*solid[ \t]*([^\r\n]*)$", re.MULTILINE)
+
+
+def _parse_floats(text: str, expected: int, where: str) -> np.ndarray:
+    """Whitespace-separated numbers -> float64 array (C-level parse; exact count enforced)."""
+    import warnings
+
+    try:
+        with warnings.catch_warnings():
+            # older numpy only warns (and returns what it read) when it stops early
+            warnings.simplefilter("ignore", DeprecationWarning)
+            vals = np.fromstring(text, dtype=np.float64, sep=" ")
+    except ValueError:
+        vals = np.zeros(0)
+    if vals.size != expected:
+        try:  # report the offending token
+            bad = next(t for t in text.split() if not _is_float(t))
+        except StopIteration:
+            bad = "?"
+        raise ValueError(f"solid '{where}': unreadable vertex coordinate '{bad[:40]}'")
+    return vals
+
+
+def _is_float(t: str) -> bool:
+    try:
+        float(t)
+        return True
+    except ValueError:
+        return False
 
 
 def _read_stl_ascii(text: str, default_name: str) -> TriSurface:
@@ -111,7 +140,7 @@ def _read_stl_ascii(text: str, default_name: str) -> TriSurface:
             raise ValueError(f"solid '{name}' has {len(coords)} vertices (not a multiple of 3)")
         if not coords:
             continue
-        v = np.array(coords, dtype=np.float64).reshape(-1, 3, 3)
+        v = _parse_floats(" ".join(coords), 3 * len(coords), name).reshape(-1, 3, 3)
         if name in names:
             idx = names.index(name)
         else:
@@ -129,7 +158,7 @@ def _from_triangle_soup(tri: np.ndarray, regions: np.ndarray, names: list[str]) 
     if not np.all(np.isfinite(tri)):
         raise ValueError("non-finite coordinates in geometry")
     flat = tri.reshape(-1, 3)
-    uniq, inv = np.unique(flat, axis=0, return_inverse=True)
+    uniq, inv = weld_float_rows(flat)
     faces = inv.reshape(-1, 3)
     return TriSurface(uniq, faces, regions, names)
 

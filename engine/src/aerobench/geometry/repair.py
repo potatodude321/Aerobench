@@ -14,6 +14,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from .inspect import boundary_loops, edge_topology, face_components
+from .fastops import unique_int_rows
 from .trisurface import TriSurface
 
 
@@ -66,7 +67,7 @@ def remove_degenerate(surf: TriSurface, rel_area: float = 1e-12) -> tuple[TriSur
 
 def remove_duplicate_faces(surf: TriSurface) -> tuple[TriSurface, OperationRecord]:
     fs = np.sort(surf.faces, axis=1)
-    _, first = np.unique(fs, axis=0, return_index=True)
+    _, first = unique_int_rows(fs, return_index=True)
     keep = np.zeros(surf.n_faces, bool)
     keep[first] = True
     out = surf.subset_faces(keep)
@@ -259,7 +260,7 @@ def simplify_vertex_clustering(surf: TriSurface, cell_size: float) -> tuple[TriS
         raise ValueError("cell_size must be positive")
     lo, _ = surf.bbox()
     key = np.floor((surf.points - lo) / cell_size).astype(np.int64)
-    cluster = np.unique(key, axis=0, return_inverse=True)[1].reshape(-1)
+    cluster = unique_int_rows(key, return_inverse=True)[1].reshape(-1)
     ncl = int(cluster.max()) + 1
     sums = np.zeros((ncl, 3))
     np.add.at(sums, cluster, surf.points)

@@ -22,6 +22,7 @@ import numpy as np
 from ..domain.exploration import FFDDef, GeometryParameter, RBFDef
 from ..domain.geometry import ComponentRole, GeometryComponent
 from ..domain.vehicle import Wheel
+from .fastops import unique_int_rows
 from .trisurface import TriSurface
 
 RIGID_KINDS = ("translate", "rotate")
@@ -548,7 +549,7 @@ def check_deformation(
 
 def _closed(faces: np.ndarray) -> bool:
     e = np.sort(np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]]), axis=1)
-    _, cnt = np.unique(e, axis=0, return_counts=True)
+    _, cnt = unique_int_rows(e, return_counts=True)
     return bool(len(cnt)) and bool(np.all(cnt == 2))
 
 

@@ -115,6 +115,48 @@ def _position_for(centre, all_centres) -> WheelPosition:
     return WheelPosition.RL if left else WheelPosition.RR
 
 
+_FRONT = {WheelPosition.FL, WheelPosition.FR}
+_LEFT = {WheelPosition.FL, WheelPosition.RL}
+
+
+def _compose(front: bool, left: bool) -> WheelPosition:
+    if front:
+        return WheelPosition.FL if left else WheelPosition.FR
+    return WheelPosition.RL if left else WheelPosition.RR
+
+
+def _resolve_position(name: str, fit: "WheelFit", fits: list["WheelFit"]) -> tuple[WheelPosition, Optional[str]]:
+    """Wheel position from the geometry where it is unambiguous, from the region name
+    otherwise. In the CFD frame the nose points to -x and +y is the vehicle's right, so a
+    wheel clearly ahead of the others is a front wheel whatever the CAD called it; a name
+    that contradicts the geometry usually means the nose/up directions are set wrongly,
+    which is reported."""
+    named = wheel_position_from_name(name)
+    xs = np.array([f.centre[0] for f in fits])
+    d = float(np.median([2.0 * f.radius for f in fits])) if fits else 0.0
+    spread = float(xs.max() - xs.min()) if len(xs) else 0.0
+    geo_front: Optional[bool] = None
+    if len(fits) >= 2 and spread > 0.5 * d:
+        x_mid = 0.5 * (xs.min() + xs.max())
+        if abs(fit.centre[0] - x_mid) > 0.25 * spread:
+            geo_front = bool(fit.centre[0] < x_mid)
+    geo_left: Optional[bool] = None
+    if abs(fit.centre[1]) > 0.5 * fit.width:
+        geo_left = bool(fit.centre[1] < 0)
+    if named is None:
+        if geo_front is None or geo_left is None:
+            return _position_for(fit.centre, [f.centre for f in fits]), None
+        return _compose(geo_front, geo_left), None
+    front = geo_front if geo_front is not None else named in _FRONT
+    left = geo_left if geo_left is not None else named in _LEFT
+    pos = _compose(front, left)
+    note = None
+    if pos != named:
+        note = (f"Region '{name}' is named as the {named.value} wheel but sits at {pos.value} with the current "
+                "nose and up directions. If the vehicle points the wrong way, change the orientation.")
+    return pos, note
+
+
 @dataclass
 class IdentificationResult:
     components: list[GeometryComponent]
@@ -148,12 +190,14 @@ def identify_components(surf_cfd: TriSurface, ground_z: Optional[float] = None) 
 
     wheel_candidates: list[tuple[str, WheelFit]] = []
     region_roles: dict[str, ComponentRole] = {}
+    order = np.argsort(surf_cfd.regions, kind="stable")
+    bounds = np.searchsorted(surf_cfd.regions[order], np.arange(len(surf_cfd.region_names) + 1))
     for ri, rname in enumerate(surf_cfd.region_names):
-        mask = surf_cfd.regions == ri
-        if not mask.any():
+        rf = order[bounds[ri]:bounds[ri + 1]]
+        if not len(rf):
             continue
         role = role_from_name(rname)
-        pts = surf_cfd.points[np.unique(surf_cfd.faces[mask])]
+        pts = surf_cfd.points[np.unique(surf_cfd.faces[rf])]
         if role == ComponentRole.WHEEL or role is None:
             fit = fit_wheel(pts, ground_z)
             if fit and (role == ComponentRole.WHEEL and fit.confidence > 0.2 or fit.confidence > 0.6):
@@ -167,18 +211,21 @@ def identify_components(surf_cfd: TriSurface, ground_z: Optional[float] = None) 
         n, labels = face_components(surf_cfd)
         if 4 <= n <= 64:
             notes.append("Wheels searched among disconnected parts of a single-region surface.")
+            corder = np.argsort(labels, kind="stable")
+            cb = np.searchsorted(labels[corder], np.arange(n + 1))
             for c in range(n):
-                mask = labels == c
-                pts = surf_cfd.points[np.unique(surf_cfd.faces[mask])]
+                pts = surf_cfd.points[np.unique(surf_cfd.faces[corder[cb[c]:cb[c + 1]]])]
                 fit = fit_wheel(pts, ground_z)
                 if fit and fit.confidence > 0.6:
                     wheel_candidates.append((f"part{c}", fit))
 
     if wheel_candidates:
-        centres = [f.centre for _, f in wheel_candidates]
+        fits = [f for _, f in wheel_candidates]
         taken: set[WheelPosition] = set()
         for rname, fit in sorted(wheel_candidates, key=lambda t: -t[1].confidence):
-            pos = wheel_position_from_name(rname) or _position_for(fit.centre, centres)
+            pos, note = _resolve_position(rname, fit, fits)
+            if note:
+                notes.append(note)
             if pos in taken:
                 notes.append(f"Region '{rname}' looks like a wheel but position {pos.value} is already taken.")
                 region_roles[rname] = ComponentRole.WHEEL

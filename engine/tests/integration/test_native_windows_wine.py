@@ -40,7 +40,9 @@ from aerobench.settings import AppSettings
 from .conftest import coarse_mesh
 
 REPO = Path(__file__).resolve().parents[3]
-BUNDLE = REPO / "packaging" / "build" / "bundle"
+# the staged bundle, or an *installed* resources folder (AEROBENCH_TEST_BUNDLE), e.g.
+# "$WINEPREFIX/drive_c/Program Files/AeroBench/resources" after a silent install under Wine
+BUNDLE = Path(os.environ.get("AEROBENCH_TEST_BUNDLE") or REPO / "packaging" / "build" / "bundle")
 WINE = shutil.which("wine") or ("/tmp/claude-0/winebin/wine" if Path("/tmp/claude-0/winebin/wine").exists() else None)
 PREFIX = Path(os.environ.get("WINEPREFIX", Path.home() / ".wine"))
 MSMPI_BIN = PREFIX / "drive_c" / "Program Files" / "Microsoft MPI" / "Bin"
@@ -154,7 +156,7 @@ def test_full_serial_pipeline_with_the_windows_binaries(wine_ctx, tmp_path):
     # the commands that ran are the Windows executables of the bundle
     st = JobManager(p).state(res["job_id"])
     solve = next(s for s in st.steps if s.name == "solve")
-    assert solve.command[1].endswith("simpleFoam.exe") and "packaging/build/bundle/openfoam" in solve.command[1]
+    assert solve.command[1].endswith("simpleFoam.exe") and solve.command[1].startswith(str(BUNDLE / "openfoam"))
     log = (p.job_dir(res["job_id"]) / solve.log).read_text(errors="replace")
     assert "Time = 60" in log and "End" in log
 

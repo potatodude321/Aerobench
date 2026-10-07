@@ -22,6 +22,10 @@ tested and documented; later items are ordered by engineering value.
 
 1. **Validation records on Windows.** Run `aerobench benchmark` (Ahmed 25°/35°, medium and
    fine) on reference Windows workstations and publish the JSON records with each release.
+   Development records ([benchmarks.md](benchmarks.md)) show the coarse level does not
+   reproduce the 25°→35° drag drop and the medium 25° run oscillates without settling; if
+   medium/fine do not capture the regime change, tune the automatic slant/wake refinement
+   for separated rear ends (and offer a transient option, below) before claiming it.
 2. **Remote / HPC provider transport.** SSH staging (rsync/SFTP), Slurm/PBS submission,
    queue monitoring and result retrieval; the provider interface and staging model exist.
 3. **Run-time mesh adaptation of the wake** (refinement from a first solution) and automatic
@@ -45,7 +49,8 @@ tested and documented; later items are ordered by engineering value.
 
 ## Known limitations
 
-* Steady RANS only; strongly separated or unsteady flows carry model error.
+* Steady RANS only; strongly separated or unsteady flows carry model error, and their force
+  coefficients may oscillate without settling (reported as such; window means are shown).
 * The native Windows build cannot compile code at run time; features that would need
   `coded*` objects are not offered.
 * Geometry parameters act on the triangulated surface (not on CAD); very large morphs can

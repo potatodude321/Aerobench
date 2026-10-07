@@ -147,8 +147,19 @@ async function createWindow(): Promise<void> {
     if (url.startsWith("http://127.0.0.1") || url.startsWith("https://")) shell.openExternal(url);
     return { action: "deny" };
   });
-  if (isDev) await win.loadURL(process.env.AEROBENCH_DEV_URL!);
-  else await win.loadURL(engineInfo!.url + "/");
+  const target = isDev ? process.env.AEROBENCH_DEV_URL! : engineInfo!.url + "/";
+  // The engine listens before it announces its port, so the first load normally succeeds;
+  // retry briefly anyway rather than ever leaving the user on a browser error page.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await win.loadURL(target);
+      return;
+    } catch (err) {
+      if (!win || win.isDestroyed()) return;
+      if (attempt >= 40) throw err;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  }
 }
 
 function registerIpc(): void {
@@ -244,7 +255,13 @@ if (!app.requestSingleInstanceLock()) {
       return;
     }
     splashStatus("Opening the workspace…");
-    await createWindow();
+    try {
+      await createWindow();
+    } catch (err) {
+      splashStatus("The workspace did not open.", true);
+      dialog.showErrorBox("AeroBench could not open its window", `${(err as Error).message}\n\nRestart AeroBench. If this keeps happening, run the AeroBench setup again.`);
+      app.quit();
+    }
   });
 }
 

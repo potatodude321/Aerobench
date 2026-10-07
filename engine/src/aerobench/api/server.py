@@ -1,6 +1,6 @@
 """Engine service entry point: ``python -m aerobench.api.server``.
 
-Prints one machine-readable line once listening::
+Prints one machine-readable line once the socket is listening::
 
     AEROBENCH_READY {"port": 51234, "token": "..."}
 
@@ -17,10 +17,17 @@ import socket
 import sys
 
 
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+def _listening_socket(port: int) -> socket.socket:
+    """Bind and listen *before* announcing the port: a client that connects as soon as it reads
+    the READY line is queued by the kernel until the server accepts, never refused (and no
+    other process can take a port that was only probed)."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    if os.name != "nt":
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(("127.0.0.1", port))
+    s.listen(128)
+    s.set_inheritable(False)
+    return s
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -35,15 +42,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--static", default=None, help="serve the built desktop renderer from this directory")
     args = ap.parse_args(argv)
     token = "" if args.no_token else (args.token or secrets.token_urlsafe(32))
-    port = args.port or _free_port()
 
     import uvicorn
 
     from .app import create_app
 
     app = create_app(token=token, dev_cors=args.dev, static_dir=args.static)
+    sock = _listening_socket(args.port)
+    port = sock.getsockname()[1]
     print("AEROBENCH_READY " + json.dumps({"port": port, "token": token, "pid": os.getpid()}), flush=True)
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning", access_log=False)
+    server = uvicorn.Server(uvicorn.Config(app, log_level="warning", access_log=False))
+    server.run(sockets=[sock])
     return 0
 
 

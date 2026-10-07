@@ -12,16 +12,17 @@ setup installs everything the application needs.
 | ParaView 6.2.0 (Kitware) | field visualisation, report images, *Open in ParaView* |
 | OpenCASCADE | STEP/IGES/BREP import |
 
-Disk space: about 3.5 GB. On first start the *Environment* card on the Welcome screen shows
-the components it found (marked *included*), the cores and memory. If Microsoft MPI is
-missing (for example removed later), the card offers **Install Microsoft MPI**.
+Disk space: about 3.5 GB. A launch window shows progress while the engine starts. On the
+start screen, *This computer* lists the components found (marked *included*), the cores and
+memory. If Microsoft MPI is missing (for example removed later), it offers **Install
+Microsoft MPI**.
 
 Advanced alternatives (Settings → Solver): your own OpenFOAM v2606 installation, OpenFOAM
 inside WSL2, or a Linux workstation with `openfoam2606` installed.
 
 ## 2. Create a project
 
-*Welcome → New project*: name, parent folder and a template (Generic road car, Formula
+Start screen → *New project*: name, folder and a starting point (Generic road car, Formula
 Student, GT / race car, half-car symmetry, full-car yaw study, high-downforce, low-drag). The project is a folder you can copy, archive or back
 up; it contains the configuration, the database, geometry revisions, meshes, runs and reports.
 
@@ -29,8 +30,13 @@ up; it contains the configuration, the database, geometry revisions, meshes, run
 
 * **Import** STL, OBJ, PLY, STEP, IGES or BREP (CAD import is part of the Windows installer;
   in a development environment it needs the `cad` extra). Units are detected
-  from the size (a car in millimetres is recognised) and can be changed; set the forward and
-  up axes if the file is not in the usual orientation.
+  from the size (a car in millimetres is recognised) and can be changed.
+* **Orientation**: say where the nose points and which way is up *in the file*. The 3D view
+  turns at once; wheels and reference values are recomputed in the background a moment
+  later. Wheels are found from their shape (round, narrow, on a sideways axis, touching the
+  ground) and placed front/rear and left/right from where they sit. If the file names a
+  wheel differently from where it ends up (for example `wheel_FL` at the rear), the nose
+  direction is probably wrong and AeroBench says so.
 * **Diagnostics** list open edges, non-manifold edges, inverted normals, self-touching islands
   and tiny parts, with the affected regions. **Repair** runs a recorded pipeline (merge
   vertices, remove degenerate/duplicate faces, orient normals, fill small holes, remove
@@ -51,6 +57,12 @@ up; it contains the configuration, the database, geometry revisions, meshes, run
   component and region; boundary layers designed for a target y+ (wall functions or resolved);
   the panel shows the estimated cell count and memory before meshing. After meshing: cell
   count, checkMesh quality, layer coverage per patch and plain-language findings.
+* **Inspecting the generated mesh** (Mesh → *Generated mesh* in the 3D view): the real cell
+  faces on the vehicle and the ground, optionally as a wireframe, with the refinement boxes
+  and the tunnel outline as they were for that mesh. *Cut through the volume* (lengthwise,
+  across or level, with a position slider) shows the cells in a plane, coloured by
+  refinement level with the same colours as the refinement boxes; the vehicle surface on
+  the camera side is cut away so the cells around the body stay visible.
 * **Physics**: speed, yaw, fluid properties (from temperature), turbulence model, inlet
   turbulence, numerics preset; the right-hand panel shows derived quantities (Re, q, y+ cell
   height, free-stream k/ω, wheel speeds) and the sign conventions.
@@ -68,9 +80,10 @@ current state and ends cleanly; *Resume* continues from it.
 * Key numbers: Cd, Cl, front/rear downforce, aero balance (shown as undefined when the vehicle makes net lift or near-zero downforce),
   side force and moments, CdA — with their sign conventions. Per-component forces, drag
   split into pressure and friction, y+ statistics.
-* **Visualise**: Cp/y+/wall-shear maps, centreline and wake planes, underfloor, wheel wakes,
+* **Views**: Cp/y+/wall-shear maps, centreline and wake planes, underfloor, wheel wakes,
   streamlines, Q-criterion — computed by ParaView and shown in the 3D view; *Open in
-  ParaView* for anything else.
+  ParaView* for anything else. If a view has points without values (shown grey), a note says
+  how much is missing.
 * **Compare**: pick runs and a baseline; deltas (with percentages only where meaningful),
   warnings when runs are not comparable, side-by-side views with synchronised cameras.
 
@@ -107,7 +120,8 @@ reports.
 
 | Message | Meaning / action |
 |---|---|
-| Microsoft MPI is not installed | Click *Install Microsoft MPI* on the Environment card (administrator approval) |
+| Microsoft MPI is not installed | Click *Install Microsoft MPI* under *This computer* on the start screen (administrator approval) |
+| No wheels found / "named as the FL wheel but sits at RR" | The nose or up direction is set wrongly: change it on the Geometry page |
 | The OpenFOAM included with AeroBench is missing or damaged | Run the AeroBench setup again (repairs the installation; antivirus quarantine is the usual cause) |
 | A required DLL was not found (STATUS_DLL_NOT_FOUND) | Usually missing MS-MPI; otherwise run the setup again |
 | The meshing seed point is not inside the flow domain | Tunnel too small or geometry crossing the domain; enlarge the tunnel |

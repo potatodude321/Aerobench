@@ -23,7 +23,18 @@ test("create, import, close and reopen a project", async () => {
     env: { ...process.env, AEROBENCH_PYTHON: python, AEROBENCH_CONFIG_DIR: path.join(work, "cfg"), ELECTRON_DISABLE_SECURITY_WARNINGS: "1" },
   });
   try {
-    const win = await app.firstWindow();
+    // the launch window (a data: URL) comes first; the application window follows it
+    const mainWindow = async () => {
+      const deadline = Date.now() + 120_000;
+      while (Date.now() < deadline) {
+        // the launch window starts as about:blank before its data: URL loads
+        const w = app.windows().find((x) => /^(file|https?):/.test(x.url()));
+        if (w) return w;
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      throw new Error("the application window did not open");
+    };
+    const win = await mainWindow();
     win.on("console", (m) => { if (m.type() === "error") console.log("[renderer]", m.text()); });
     win.on("pageerror", (e) => console.log("[pageerror]", e.message));
     await expect(win.getByText("Recent projects")).toBeVisible({ timeout: 90_000 });
@@ -60,8 +71,8 @@ test("create, import, close and reopen a project", async () => {
     await win.getByText(/E2E.car/).first().click();
     await expect(win.getByText("synthetic_car.stl").or(win.getByText("car.stl")).first()).toBeVisible({ timeout: 30_000 });
   } catch (e) {
-    const win = await app.firstWindow();
-    await win.screenshot({ path: "test-results/e2e-failure.png" });
+    const w = app.windows().find((x) => /^(file|https?):/.test(x.url())) ?? app.windows()[0];
+    if (w) await w.screenshot({ path: "test-results/e2e-failure.png" }).catch(() => undefined);
     throw e;
   } finally {
     await app.close();

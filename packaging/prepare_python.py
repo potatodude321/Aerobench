@@ -88,6 +88,8 @@ def main() -> int:
     # engine wheel (pure Python) + Windows wheels of every dependency
     for old in wheels.glob("aerobench-*.whl"):
         old.unlink()
+    # setuptools builds in-tree: a stale engine/build/ could put deleted modules into the wheel
+    shutil.rmtree(ROOT / "engine" / "build", ignore_errors=True)
     run([sys.executable, "-m", "pip", "wheel", "--no-deps", "-w", str(wheels), str(ROOT / "engine")])
     engine_whl = next(wheels.glob("aerobench-*.whl"))
     # pip evaluates environment markers for the *running* interpreter, so Windows-only

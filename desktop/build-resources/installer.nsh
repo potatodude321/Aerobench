@@ -69,6 +69,8 @@
       ${Else}
         Quit
       ${EndIf}
+    ${ElseIf} $R0 != 0
+      MessageBox MB_OK|MB_ICONEXCLAMATION "The setup could not check whether AeroBench or a simulation is running.$\r$\nClose AeroBench and stop running simulations, then click OK." /SD IDOK
     ${EndIf}
   ${EndIf}
 !macroend

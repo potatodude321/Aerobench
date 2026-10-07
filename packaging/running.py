@@ -39,12 +39,20 @@ def scan(install: str) -> tuple[list[psutil.Process], list[tuple[psutil.Process,
     # update executes from inside the installation folder)
     me = psutil.Process()
     skip = {me.pid} | {a.pid for a in me.parents()}
-    for p in psutil.process_iter(["pid", "exe", "cmdline", "status"]):
-        if p.info["pid"] in skip or p.info.get("status") == psutil.STATUS_ZOMBIE:
+    for pid in psutil.pids():
+        if pid in skip:
             continue
-        exe = p.info.get("exe") or ""
-        cmd = p.info.get("cmdline") or []
-        if not exe or not _under(exe, install):
+        # one unreadable process (protected, exited meanwhile, unsupported query) must not
+        # abort the scan
+        try:
+            p = psutil.Process(pid)
+            if p.status() == psutil.STATUS_ZOMBIE:
+                continue
+            exe = p.exe() or ""
+            if not exe or not _under(exe, install):
+                continue
+            cmd = p.cmdline() or []
+        except (psutil.Error, OSError):
             continue
         if "aerobench.jobs.runner" in cmd:
             i = cmd.index("aerobench.jobs.runner")
@@ -110,7 +118,14 @@ def main(argv: list[str]) -> int:
     if len(argv) != 2 or argv[0] not in ("check", "close-app", "stop-sims"):
         print(__doc__, file=sys.stderr)
         return 64
-    mode, install = argv
+    try:
+        return _run(*argv)
+    except Exception as exc:  # noqa: BLE001 - the setup asks the user instead (exit 2)
+        print(f"could not determine running processes: {exc}", file=sys.stderr)
+        return 2
+
+
+def _run(mode: str, install: str) -> int:
     if mode == "check":
         app, sims = scan(install)
         print(f"application processes: {len(app)}, simulations: {len(sims)}")

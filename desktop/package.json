@@ -93,9 +93,9 @@
       ],
       "artifactName": "AeroBench-Setup-${version}.exe",
       "icon": "build-resources/icon.png",
-      "signExts": [
-        "!.exe"
-      ]
+      "signtoolOptions": {
+        "sign": "build-resources/sign.js"
+      }
     },
     "nsis": {
       "oneClick": false,

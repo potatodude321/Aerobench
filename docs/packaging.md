@@ -68,8 +68,8 @@ WSL is deliberately not bundled (ADR-0010).
 Unsigned installers trigger SmartScreen warnings. For release, sign with an EV or OV
 code-signing certificate: set `CSC_LINK`/`CSC_KEY_PASSWORD` (or `WIN_CSC_LINK`) for
 electron-builder, which signs `AeroBench.exe`, the uninstaller and the installer. Bundled
-third-party executables are excluded from signing (`win.signExts: ["!.exe"]`) so they keep
-their vendors' own signatures (Microsoft for MS-MPI, the PSF for Python).
+third-party executables are excluded by a signing hook (`desktop/build-resources/sign.js`)
+so they keep their vendors' own signatures (Microsoft for MS-MPI, the PSF for Python).
 
 ## Runtime layout (installed)
 

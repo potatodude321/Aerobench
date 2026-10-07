@@ -220,6 +220,11 @@ def resume_run(project: Project, ctx: AppContext, run_id: str, extra_iterations:
     provider, pinfo = ctx.require_provider(row["provider"])
     adapter = get_adapter(cfg.solver.fork.value, cfg.solver.version, ctx.settings.allow_experimental_adapters)
     target = cfg.numerics.iterations + int(extra_iterations)
+    latest = max(float(t.name) for t in times + proc_times)
+    if target <= latest:
+        raise AeroBenchError.make("run.nothing_to_resume", ErrorCategory.SOLVER,
+                                  f"The run already reached iteration {latest:g}; resuming to {target} would do nothing.",
+                                  action="Add iterations (e.g. 'Continue +500 iterations').")
     n = int(row["n_procs"] or 1)
     wi = cfg.numerics.write_interval or min(500, target)
     steps: list = [CopyStep(name="schemes_final", src="system/fvSchemes.final", dst="system/fvSchemes", optional=True),

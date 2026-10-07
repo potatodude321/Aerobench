@@ -68,26 +68,43 @@ async function handle<T>(r: Response): Promise<T> {
 }
 
 /**
- * Mutations are applied strictly in the order the user made them.  A field commits on blur,
- * which fires on mouse-down of the next click: an edit and a "Run simulation" click therefore
- * leave together, and without ordering the engine could snapshot the configuration before the
- * edit lands.  Each mutation waits for the previous one to finish (success or failure).
- * Read-only POSTs (previews, comparisons, ParaView renders, report generation, exports) are
- * not queued, so a slow render never delays an edit.
+ * Mutations of a project are applied strictly in the order the user made them.  A field
+ * commits on blur, which fires on mouse-down of the next click: an edit and a "Run simulation"
+ * click therefore leave together, and without ordering the engine could snapshot the
+ * configuration before the edit lands.  Each mutation waits for the previous mutation *of the
+ * same project* to finish (success or failure).
+ *
+ * Not queued: requests that do not change what a later request reads — previews, comparisons,
+ * ParaView renders, report generation, exports — and controls that must act immediately
+ * whatever is in flight: stopping or killing a run or job, pausing/resuming/cancelling a
+ * study, closing the project.
  */
-const UNQUEUED = [/\/preview(\.abg)?$/, /\/compare$/, /\/viz\//, /\/reports$/, /\/geometry\/export$/];
-let mutationChain: Promise<unknown> = Promise.resolve();
+const UNQUEUED = [
+  /\/preview(\.abg)?$/, /\/compare$/, /\/viz\//, /\/reports$/, /\/geometry\/export$/,
+  /\/(runs|jobs)\/[^/]+\/stop$/, /\/studies\/[^/]+\/(pause|resume|cancel)$/, /\/close$/,
+];
+const chains = new Map<string, Promise<unknown>>();
+
+function queueKey(path: string): string | null {
+  if (UNQUEUED.some((re) => re.test(path))) return null;
+  const m = /^\/api\/p\/([^/]+)\//.exec(path);
+  return m ? m[1] : null;
+}
 
 export function ordered<T>(path: string, fn: () => Promise<T>): Promise<T> {
-  if (UNQUEUED.some((re) => re.test(path))) return fn();
-  const run = mutationChain.then(fn, fn);
-  mutationChain = run.catch(() => undefined);
+  const key = queueKey(path);
+  if (key === null) return fn();
+  const run = (chains.get(key) ?? Promise.resolve()).then(fn, fn);
+  const tail = run.catch(() => undefined);
+  chains.set(key, tail);
+  // forget an idle queue so the map does not grow with every project opened
+  tail.then(() => { if (chains.get(key) === tail) chains.delete(key); });
   return run;
 }
 
-/** Resolves when every mutation issued so far has been applied. */
-export function settled(): Promise<void> {
-  return mutationChain.then(() => undefined);
+/** Resolves when every mutation issued so far (all projects) has been applied. */
+export async function settled(): Promise<void> {
+  await Promise.all([...chains.values()]);
 }
 
 export const api = {

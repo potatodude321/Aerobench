@@ -90,7 +90,8 @@ export const useApp = create<AppState>((set, get) => ({
     if (!p) return false;
     try {
       const res = await api.patch<ProjectPayload>(`/api/p/${p.project_id}/config`, patch);
-      set({ project: res });
+      // the project may have been closed or switched while the edit was in flight
+      if (get().project?.project_id === p.project_id) set({ project: res });
       return true;
     } catch (e) {
       if (e instanceof EngineError && e.status === 409) throw e;

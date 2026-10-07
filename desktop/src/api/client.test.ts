@@ -41,6 +41,26 @@ describe("mutation ordering", () => {
     await settled();
   });
 
+  it("never queues stop/kill or study controls behind a slow mutation", async () => {
+    stubFetch({ "/api/p/1/geometry/import": 80 });
+    let importDone = false;
+    const imp = api.post("/api/p/1/geometry/import", {}).then(() => (importDone = true));
+    await api.post("/api/p/1/runs/run-1/stop", { force: true });
+    await api.post("/api/p/1/studies/s-1/cancel");
+    expect(importDone).toBe(false);
+    await imp;
+  });
+
+  it("queues per project", async () => {
+    stubFetch({ "/api/p/1/geometry/import": 80 });
+    let importDone = false;
+    const imp = api.post("/api/p/1/geometry/import", {}).then(() => (importDone = true));
+    await api.patch("/api/p/2/config", {});
+    expect(importDone).toBe(false);
+    await imp;
+    await settled();
+  });
+
   it("does not queue read-only posts behind a slow mutation", async () => {
     stubFetch({ "/api/p/1/geometry/import": 80 });
     let importDone = false;

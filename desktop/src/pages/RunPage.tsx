@@ -196,6 +196,16 @@ function RunMonitor({ runId, jobs, onResults }: { runId: string; jobs: any; onRe
       notifyError(e);
     }
   };
+  const reingest = async () => {
+    try {
+      const r = await api.post(`/api/p/${pid()}/runs/${runId}/reingest`);
+      notifyOk(`Results read again from the case files — run is ${r.status}.`);
+      refreshRuns();
+      load();
+    } catch (e) {
+      notifyError(e);
+    }
+  };
   const reproduce = async () => {
     try {
       const r = await api.post(`/api/p/${pid()}/runs/${runId}/reproduce`);
@@ -251,6 +261,11 @@ function RunMonitor({ runId, jobs, onResults }: { runId: string; jobs: any; onRe
                 {run.status === "completed" && (
                   <Menu.Item leftSection={<IconPlayerPlay size={14} />} onClick={resume}>
                     Continue +500 iterations
+                  </Menu.Item>
+                )}
+                {!live && (
+                  <Menu.Item leftSection={<IconRepeat size={14} />} onClick={reingest}>
+                    Re-read results from the case
                   </Menu.Item>
                 )}
               </Menu.Dropdown>

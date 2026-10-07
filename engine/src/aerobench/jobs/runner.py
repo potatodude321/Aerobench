@@ -66,6 +66,9 @@ class Runner:
         # copy is "live" (staged in, not yet staged out) host-side edits must be mirrored into
         # it, and it must be copied back however the job ends.
         self._staged_live = False
+        # A stop/kill took effect.  The on-disk status stays STOPPING (not terminal) until the
+        # staged copy has been salvaged, so nothing ingests or resumes a half-copied case.
+        self._stopped = False
         if self.provider.staging == "staged":
             for st_def, st_state in zip(self.spec.steps[: self.spec.resume_from_step], self.state.steps):
                 if isinstance(st_def, StageStep) and st_state.status == "completed":
@@ -103,12 +106,15 @@ class Runner:
                 step = self.spec.steps[i]
                 req = self.control()
                 if req in ("stop", "kill"):
+                    self.state.status = JobStatus.STOPPING
+                    self.state.stop_requested = req
+                    self.save()
                     self._salvage("stopped")
                     self._finish(JobStatus.STOPPED, f"Stopped before step '{step.name}'.")
                     return 0
                 self.state.step_index = i
                 ok = self._run_step(i, step)
-                if self.state.status in (JobStatus.STOPPED, JobStatus.STOPPING):
+                if self._stopped:
                     how = "forced" if self.state.stop_requested == "kill" else "graceful (latest state written)"
                     self._salvage("stopped")
                     self._finish(JobStatus.STOPPED, f"Stopped by request during '{step.name}' — {how}.")
@@ -161,8 +167,15 @@ class Runner:
 
     def _mirror(self, spec, i: int, st: StepState, what: str) -> bool:
         """Apply a host-side change to the live staged copy (no-op for in-place providers)."""
-        if not self._staged_live or spec is None:
+        if not self._staged_live:
             return True
+        if spec is None:
+            # a staged provider that cannot apply the edit would let the solver run on stale
+            # input (e.g. the wrong schemes or endTime): fail the step instead
+            st.diagnostics.append(Diagnostic(code="environment.staging_unsupported", category=ErrorCategory.ENVIRONMENT,
+                                             summary=f"The execution provider cannot apply '{st.name}' to its staged copy of the case.",
+                                             action="Use another execution provider for this job."))
+            return False
         log = self.job_dir / "logs" / f"{i:02d}-{st.name}.log"
         st.log = str(log.relative_to(self.job_dir))
         st.command = spec.argv
@@ -185,6 +198,8 @@ class Runner:
             self._staged_live = False
             return
         log = self.job_dir / "logs" / "salvage-stage_out.log"
+        self.state.message = "Copying the results back from the staged copy of the case…"
+        self.save()
         self.event("staged_salvage_started", reason=why)
         rc = self._plain(spec.argv, {**os.environ, **spec.env}, spec.cwd or str(self.case_dir), log, SALVAGE_TIMEOUT)
         self.event("staged_salvage_finished", reason=why, exit_code=rc)
@@ -195,7 +210,9 @@ class Runner:
                 code="environment.staging_failed", category=ErrorCategory.ENVIRONMENT,
                 summary="The staged copy of the case could not be copied back after the job ended.",
                 details=f"exit code {rc}; see logs/salvage-stage_out.log",
-                action="The data is still in the staged copy; retry by resuming the run or copy it manually."))
+                action="The latest results are still in the staged copy. Copy them back before resuming or re-running "
+                       "this run (a new stage-in refuses to overwrite newer staged results) by running this command "
+                       f"in a terminal:\n{spec.display()}"))
 
     def _finish(self, status: JobStatus, msg: str) -> None:
         self.state.status = status
@@ -219,7 +236,7 @@ class Runner:
                 ok = self._mirror(self.provider.push_files(self.case_dir, [step.dst]) if self._staged_live else None, i, st, step.dst)
             elif isinstance(step, RemoveStep):
                 for pat in step.globs:
-                    for p in glob.glob(str(self.case_dir / pat)):
+                    for p in glob.glob(os.path.join(glob.escape(str(self.case_dir)), pat)):
                         pp = Path(p).resolve()
                         if self.case_dir.resolve() not in pp.parents:
                             raise RuntimeError(f"refusing to remove outside the case: {pp}")
@@ -275,7 +292,7 @@ class Runner:
             st.diagnostics.append(Diagnostic(code="internal.step", category=ErrorCategory.INTERNAL, summary=f"Step '{step.name}' raised an error.",
                                              details=f"{exc}\n{traceback.format_exc()}"))
             ok = False
-        if self.state.status == JobStatus.STOPPED:
+        if self._stopped:
             st.status = "stopped"
         else:
             st.status = "completed" if ok else ("skipped" if step.optional else "failed")
@@ -301,7 +318,7 @@ class Runner:
         rc = self._exec(spec.argv, env, spec.cwd or str(self.case_dir), log, solver=step.solver)
         st.exit_code = rc
         text = log.read_text(errors="replace") if log.exists() else ""
-        if self.state.status == JobStatus.STOPPED:
+        if self._stopped:
             return True
         ok = rc == 0 and (not step.require_end or _has_end(text))
         if not ok:
@@ -317,7 +334,7 @@ class Runner:
         """Write the graceful-stop trigger into the staged copy the solver is reading."""
         spec = self.provider.write_file(self.case_dir, STOP_FO_NAME, "action=writeNow\n")
         if spec is None:
-            return True
+            return False  # cannot reach the copy: the caller terminates the solver instead
         try:
             out = subprocess.run(spec.argv, cwd=spec.cwd or str(self.case_dir), env={**os.environ, **spec.env},
                                  stdin=subprocess.DEVNULL, capture_output=True, timeout=MIRROR_TIMEOUT)
@@ -345,8 +362,11 @@ class Runner:
                 self.event("kill_requested")
                 kill_tree(proc.pid, graceful=False)
                 proc.wait()
-                self.state.status = JobStatus.STOPPED
+                self._stopped = True
+                self.state.status = JobStatus.STOPPING
                 self.state.stop_requested = "kill"
+                self.state.child_pid = None
+                self.save()
                 return proc.returncode if proc.returncode is not None else -9
             if req == "stop" and stop_sent_at is None:
                 self.state.stop_requested = "stop"
@@ -372,7 +392,7 @@ class Runner:
                 self.save()
             time.sleep(POLL)
         if stop_sent_at is not None:
-            self.state.status = JobStatus.STOPPED
+            self._stopped = True  # status stays STOPPING until run() has salvaged and finished
         self.state.child_pid = None
         self.save()
         return rc

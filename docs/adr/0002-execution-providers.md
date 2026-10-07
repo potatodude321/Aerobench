@@ -40,17 +40,26 @@ A provider interface (`aerobench.execution.provider.ExecutionProvider`) with:
   remote scratch), run there, and synchronise results back. This avoids 9P slowness and
   the space-in-path restriction, and is the same model remote/HPC needs. Contract:
   * the host copy is authoritative: `stage_in` replaces the staged directory with a clean
-    copy (no stale time steps or stop triggers survive from an earlier attempt); the
-    staged directory is `<work_root>/<parent>/<case>-<hash of host path>` — shell-safe and
-    never shared by two host cases;
+    copy (no stale time steps or stop triggers survive from an earlier attempt) — but refuses
+    when the staged copy holds a *later* time step than the host (results that were never
+    copied back), so they cannot be destroyed; the staged directory is
+    `<work_root>/<parent>/<case>-<hash of host path>` — shell-safe and never shared by two
+    host cases;
   * while the copy is live, host-side edits between solver steps (scheme switch, endTime,
     clean-up) are mirrored with `push_files`/`remove_paths`, and a graceful stop writes the
     trigger into the copy (`write_file`; if that fails the solver is terminated instead);
   * applications (e.g. `decomposePar` on resume) only run after `stage_in`;
   * after a stop, a failure or a runner error the copy is copied back (*salvage*) so the
-    latest written time and partial results are kept; a failed stage-in is never copied
-    back. If a machine dies mid-run, progress since the last copy-back is lost and a resume
-    restarts from the host copy.
+    latest written time and partial results are kept; the job stays `stopping` (not a final
+    state) until the copy-back has finished, so nothing ingests or resumes a half-copied case;
+    a failed stage-in is never copied back; a failed salvage reports the exact command that
+    copies the results back. If a machine dies mid-run, progress since the last copy-back
+    stays in the staged copy and the next stage-in refuses to overwrite it;
+  * a staged provider that cannot mirror an edit fails the step rather than let the solver
+    run on stale input;
+  * WSL commands are `wsl.exe [-d distro] --exec bash -c <script>`: with plain `wsl.exe --`
+    WSL hands the raw command line to the distribution's default shell, which would expand
+    `$…` and backticks (also in host paths) before bash runs the script.
 * Capability flags: `dynamic_code`, `parallel`, `mpi_launcher`.
 
 Implementations: `native-windows` (default on Windows), `local-posix` (Linux/macOS,

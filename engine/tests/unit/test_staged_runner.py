@@ -32,7 +32,9 @@ if op == "copytree":          # src dst (clean mirror)
     src, dst = Path(args[0]), Path(args[1])
     shutil.rmtree(dst, ignore_errors=True)
     shutil.copytree(src, dst)
-elif op == "copyback":        # src dst (merge, like tar -x)
+elif op == "copyback":        # src dst [seconds] (merge, like tar -x; optionally slow)
+    if len(args) > 2:
+        time.sleep(float(args[2]))
     shutil.copytree(Path(args[0]), Path(args[1]), dirs_exist_ok=True)
 elif op == "push":            # host remote rel...
     for rel in args[2:]:
@@ -85,7 +87,8 @@ class FakeStagedProvider(ExecutionProvider):
         return CommandSpec(argv=self._py("copytree", str(case_dir), str(self._remote(case_dir))))
 
     def stage_out(self, case_dir):
-        return CommandSpec(argv=self._py("copyback", str(self._remote(case_dir)), str(case_dir)))
+        slow = [str(self.config["slow_copyback"])] if self.config.get("slow_copyback") else []
+        return CommandSpec(argv=self._py("copyback", str(self._remote(case_dir)), str(case_dir), *slow))
 
     def push_files(self, case_dir, relpaths):
         return CommandSpec(argv=self._py("push", str(case_dir), str(self._remote(case_dir)), *relpaths))
@@ -166,18 +169,30 @@ def test_graceful_stop_reaches_the_solver_and_results_come_back(tmp_path, staged
              StageStep(name="stage_in", direction="in"),
              FoamStep(name="solve", app=["fakeSolver"], solver=True, stage="solve"),
              StageStep(name="stage_out", direction="out")]
+    provider.config["slow_copyback"] = 1.0
     job_dir = _job(tmp_path, case, provider, steps)
+    seen_during_salvage: list[str] = []
 
     def request_stop():
         deadline = time.time() + 30
         while time.time() < deadline and not (remote / "3").exists():
             time.sleep(0.02)
         (job_dir / "control.json").write_text(json.dumps({"request": "stop"}))
+        # while the copy-back runs, nothing may see a terminal status (the worker would
+        # ingest a half-copied case and the UI would offer Resume)
+        while time.time() < deadline:
+            ev = (job_dir / "events.jsonl").read_text()
+            if "staged_salvage_finished" in ev:
+                break
+            if "staged_salvage_started" in ev:
+                seen_during_salvage.append(read_state(job_dir).status.value)
+            time.sleep(0.05)
 
     t = threading.Thread(target=request_stop)
     t.start()
     assert Runner(job_dir).run() == 0
     t.join()
+    assert seen_during_salvage and set(seen_during_salvage) == {"stopping"}
     st = read_state(job_dir)
     assert st.status == JobStatus.STOPPED
     kinds = [e["kind"] for e in _events(job_dir)]
@@ -206,6 +221,65 @@ def test_failure_salvages_partial_results(tmp_path, staged):
     assert st.steps[-1].status == "pending"  # the regular stage-out never ran ...
     assert (case / "3" / "U").read_text() == "t=3"  # ... but the salvage did
     assert any(e["kind"] == "staged_salvage_finished" and e["exit_code"] == 0 for e in _events(job_dir))
+
+
+def test_staged_provider_without_mirroring_fails_instead_of_running_stale_input(tmp_path, staged):
+    case, provider, remote = staged
+
+    class NoMirror(FakeStagedProvider):
+        kind = "fake-staged-nomirror"
+
+        def push_files(self, case_dir, relpaths):
+            return None
+
+    registry.KINDS["fake-staged-nomirror"] = NoMirror
+    try:
+        p2 = NoMirror("nm", provider.config)
+        steps = [RemoveStep(name="clear_stop_trigger", globs=["aerobenchStop"]),
+                 StageStep(name="stage_in", direction="in"),
+                 DictSetStep(name="end", file="system/controlDict", key_path="endTime", value=3),
+                 FoamStep(name="solve", app=["fakeSolver"], solver=True),
+                 StageStep(name="stage_out", direction="out")]
+        job_dir = _job(tmp_path, case, p2, steps)
+        assert Runner(job_dir).run() == 1
+        st = read_state(job_dir)
+        assert st.steps[2].status == "failed"
+        assert st.steps[2].diagnostics[0].code == "environment.staging_unsupported"
+        assert not (remote / "seen.txt").exists()  # the solver never ran on stale input
+    finally:
+        registry.KINDS.pop("fake-staged-nomirror", None)
+
+
+def test_remove_step_handles_glob_characters_in_the_case_path(tmp_path, staged):
+    _, provider, _ = staged
+    case = tmp_path / "proj [v2]" / "runs" / "run-9"
+    (case / "system").mkdir(parents=True)
+    (case / "aerobenchStop").write_text("x")
+    (case / "processor0").mkdir()
+    steps = [RemoveStep(name="clean", globs=["aerobenchStop", "processor*"])]
+    job_dir = _job(tmp_path, case, provider, steps, name="job-glob")
+    assert Runner(job_dir).run() == 0
+    assert not (case / "aerobenchStop").exists() and not (case / "processor0").exists()
+
+
+def test_stage_in_refuses_to_overwrite_newer_staged_results(tmp_path):
+    import subprocess
+
+    from aerobench.execution.wsl import newer_results_guard
+
+    host, staged_dir = tmp_path / "host case", tmp_path / "staged"
+    for d in (host / "0", host / "100", staged_dir / "0", staged_dir / "processor0" / "250"):
+        d.mkdir(parents=True)
+    frag = newer_results_guard(shlex.quote(str(host)), shlex.quote(str(staged_dir)))
+    r = subprocess.run(["bash", "-c", frag + " && echo OK"], capture_output=True, text=True)
+    assert r.returncode == 3 and "250" in r.stderr and "100" in r.stderr
+    (host / "250").mkdir()
+    r = subprocess.run(["bash", "-c", frag + " && echo OK"], capture_output=True, text=True)
+    assert r.returncode == 0 and r.stdout.strip() == "OK"
+    # nothing staged yet, or no time directories at all: fine
+    r = subprocess.run(["bash", "-c", newer_results_guard(shlex.quote(str(host)), shlex.quote(str(tmp_path / "none"))) + " && echo OK"],
+                       capture_output=True, text=True)
+    assert r.stdout.strip() == "OK"
 
 
 def test_failed_stage_in_is_not_copied_back(tmp_path, staged):
@@ -247,12 +321,20 @@ def test_wsl_commands_quote_paths_and_reject_escapes(tmp_path):
     for spec in (p.stage_in(case), p.stage_out(case), p.push_files(case, ["system/fvSchemes"]),
                  p.remove_paths(case, ["processor*", "aerobenchStop"]), p.write_file(case, "aerobenchStop", "action=writeNow\n"),
                  p.command(["simpleFoam"], case, 4)):
-        assert spec.argv[:5] == ["wsl.exe", "-d", "Ubuntu", "--", "bash"]
+        # --exec: WSL passes the arguments to bash verbatim; plain "--" would hand the raw command
+        # line to the default shell, which expands $... and backticks before bash runs
+        assert spec.argv[:6] == ["wsl.exe", "-d", "Ubuntu", "--exec", "bash", "-c"] and len(spec.argv) == 7
         script = spec.argv[-1]
         shlex.split(script)  # well-formed for the shell
+        import subprocess
+
+        assert subprocess.run(["bash", "-n", "-c", script]).returncode == 0  # valid bash syntax
         assert '"$HOME"/' in script
+        assert "$PWD" not in script
     assert "'/mnt/e/OpenFOAM GUI/My car'\"'\"'s project/runs/run-7'" in p.stage_in(case).argv[-1]
     assert "pipefail" in p.stage_out(case).argv[-1]
+    assert "-case \"$HOME\"/" in p.command(["simpleFoam"], case, 4).argv[-1]
+    assert "exit 3" in p.stage_in(case).argv[-1]  # newer staged results are never overwritten
     with pytest.raises(ValueError):
         p.push_files(case, ["../../etc/passwd"])
     with pytest.raises(ValueError):

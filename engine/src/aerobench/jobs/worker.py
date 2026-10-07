@@ -113,7 +113,7 @@ class Worker:
         diag = Diagnostic(code="results.unreadable", category=ErrorCategory.INTERNAL,
                           summary="The results of this job could not be read.",
                           likely_cause="Output files are incomplete or damaged (e.g. the solver was killed while writing).",
-                          action="Re-ingest the run from the Run page; if it fails again, reproduce the run.",
+                          action="Use 'Re-read results from the case' in the Run page menu; if it fails again, reproduce the run.",
                           details=f"{type(exc).__name__}: {exc}").model_dump(mode="json")
         try:
             if job["kind"] == "solve" and job["target_id"]:

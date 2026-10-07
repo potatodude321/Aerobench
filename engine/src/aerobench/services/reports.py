@@ -99,9 +99,13 @@ def _run_sections(project: Project, r: dict[str, Any], viz, images: bool) -> tup
     sections.append({"title": "Summary", "blocks": [{"kind": "kv", "rows": kv},
                                                     {"kind": "table", "title": "Key results", "header": ["Quantity", "Symbol", "Value", "Sign convention"],
                                                      "rows": key_rows, "num_cols": [2]}]})
-    if m.get("balance_front_pct") is not None and abs(m.get("downforce_N") or 0) < 0.05 * abs(m.get("drag_N") or 1):
-        sections[-1]["blocks"].append({"kind": "callout", "level": "", "text": "Total downforce is small compared with drag, so the aero balance "
-                                       "(front share of total downforce) is ill-conditioned and should not be used on its own."})
+    if m.get("balance_front_pct") is None and m.get("downforce_front_N") is not None:
+        sections[-1]["blocks"].append({"kind": "callout", "level": "", "text": "The aero balance (front share of total downforce) is undefined "
+                                       "for this run: the vehicle makes net lift or near-zero downforce, so the ratio has no engineering "
+                                       "meaning. Use the front and rear downforce values instead."})
+    elif m.get("balance_front_pct") is not None and abs(m.get("downforce_N") or 0) < 0.05 * abs(m.get("drag_N") or 1):
+        sections[-1]["blocks"].append({"kind": "callout", "level": "", "text": "Total downforce is small compared with drag; treat the aero "
+                                       "balance (front share of total downforce) with care."})
 
     # --- full results
     rows = [[METRIC_INFO.get(k, {}).get("label", k), _metric_label(k), _f(m.get(k), 5), _f((res.get("metrics_last") or {}).get(k), 5),

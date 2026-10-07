@@ -205,6 +205,11 @@ def reproduce_run(project: Project, ctx: AppContext, run_id: str, launch: bool =
 def resume_run(project: Project, ctx: AppContext, run_id: str, extra_iterations: int = 0, launch: bool = False) -> dict[str, Any]:
     """Continue a stopped/interrupted/completed run from its latest time directory."""
     row = run_record(project, run_id, include_snapshot=True)
+    if row.get("job_id"):
+        job = project.db.one("SELECT status FROM jobs WHERE id = ?", (row["job_id"],))
+        if job and job["status"] not in {s.value for s in JobStatus if s.terminal}:
+            raise AeroBenchError.make("run.busy", ErrorCategory.SOLVER, "This run's job has not finished yet (it may still be copying "
+                                      "results back).", action="Wait until the run shows as stopped, failed or completed, then resume.")
     cfg = ProjectConfig.model_validate(row["config_snapshot"])
     rdir = project.root / row["path"]
     times = [p for p in rdir.iterdir() if p.is_dir() and _is_time(p.name) and float(p.name) > 0]
@@ -216,8 +221,10 @@ def resume_run(project: Project, ctx: AppContext, run_id: str, extra_iterations:
     adapter = get_adapter(cfg.solver.fork.value, cfg.solver.version, ctx.settings.allow_experimental_adapters)
     target = cfg.numerics.iterations + int(extra_iterations)
     n = int(row["n_procs"] or 1)
+    wi = cfg.numerics.write_interval or min(500, target)
     steps: list = [CopyStep(name="schemes_final", src="system/fvSchemes.final", dst="system/fvSchemes", optional=True),
                    DictSetStep(name="end_time", file="system/controlDict", key_path="endTime", value=target),
+                   DictSetStep(name="write_interval", file="system/controlDict", key_path="writeInterval", value=wi),
                    RemoveStep(name="clear_stop_trigger", globs=["aerobenchStop"])]
     steps += solve_steps(cfg, adapter, rdir, n, provider.staging == "staged", 0, resume=True,
                          decompose_latest=n > 1 and not proc_times)

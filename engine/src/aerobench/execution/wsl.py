@@ -4,7 +4,13 @@ Cases are *staged* into the distribution's ext4 filesystem (fast, case-sensitive
 shell-safe directory name per host case) and synchronised back at the end of the job, and
 also after a stop or failure so partial results and the latest written time are kept.
 Host-side edits between solver steps and the graceful-stop trigger are mirrored into the
-staged copy (``push_files``/``remove_paths``/``write_file``).  All commands go
+staged copy (``push_files``/``remove_paths``/``write_file``).
+
+Every command is ``wsl.exe [-d <distro>] --exec bash -c <script>``.  ``--exec`` matters:
+without it (``wsl.exe -- …``) WSL hands the raw Windows command line to the distribution's
+default shell, which would expand ``$…`` and backticks in our script (and in host paths)
+*before* bash runs it.  With ``--exec`` the arguments are split by the Windows rules that
+``subprocess`` quotes for, so bash receives the script verbatim.  All commands go
 through ``wsl.exe -d <distro> --`` with an explicit ``bash -c`` that sources the
 OpenFOAM bashrc; arguments are shell-quoted.
 """
@@ -27,6 +33,18 @@ def windows_to_wsl(p: Path | str) -> str:
         raise ValueError(f"not a drive path: {p}")
     rest = "/".join(w.parts[1:])
     return f"/mnt/{w.drive[0].lower()}/{rest}"
+
+
+def newer_results_guard(src: str, rdir: str) -> str:
+    """Bash fragment that fails (exit 3) when the staged copy holds a later time step than the
+    host case — results of an earlier job that were never copied back (e.g. a failed salvage).
+    A clean stage-in would otherwise delete them.  ``src``/``rdir`` are shell expressions."""
+    latest = ("latest() { { ls -1 \"$1\"; ls -1 \"$1/processor0\"; } 2>/dev/null"
+              " | grep -E '^[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$' | sort -g | tail -n 1; }")
+    return (f"{latest}; h=$(latest {src}); s=$(latest {rdir}); "
+            "if [ -n \"$s\" ] && awk -v s=\"$s\" -v h=\"${h:-0}\" 'BEGIN{exit !(s+0 > h+0)}'; then "
+            "echo \"The staged copy holds results up to time $s, newer than the host case (${h:-none}); "
+            "copy them back before running again.\" >&2; exit 3; fi")
 
 
 def list_distros(timeout: float = 15) -> list[str]:
@@ -57,11 +75,11 @@ class WSLProvider(ExecutionProvider):
     def work_root(self) -> str:
         return self.config.get("work_root", "$HOME/.aerobench/work")
 
-    def _wsl(self, script: str) -> list[str]:
+    def _wsl(self, script: str, distro: Optional[str] = None) -> list[str]:
         argv = ["wsl.exe"]
-        if self.distro:
-            argv += ["-d", self.distro]
-        return argv + ["--", "bash", "-c", script]
+        if distro or self.distro:
+            argv += ["-d", distro or self.distro]
+        return argv + ["--exec", "bash", "-c", script]
 
     def detect(self) -> ProviderInfo:
         distros = list_distros()
@@ -73,7 +91,7 @@ class WSLProvider(ExecutionProvider):
         distro = self.distro or distros[0]
         probe = f'source {shlex.quote(self.bashrc)} >/dev/null 2>&1 && echo "$WM_PROJECT_VERSION|$WM_PROJECT_DIR|$(command -v mpirun)"'
         try:
-            out = subprocess.run(["wsl.exe", "-d", distro, "--", "bash", "-c", probe], capture_output=True, text=True, timeout=60)
+            out = subprocess.run(self._wsl(probe, distro), capture_output=True, text=True, timeout=60)
             ver, pdir, mpirun = (out.stdout.strip().split("|") + ["", "", ""])[:3]
         except Exception:  # noqa: BLE001
             ver, pdir, mpirun = "", "", ""
@@ -117,7 +135,7 @@ class WSLProvider(ExecutionProvider):
         app = " ".join(shlex.quote(a) for a in app_argv)
         if nprocs > 1:
             app = f"mpirun -np {int(nprocs)} {app} -parallel"
-        script = f"source {shlex.quote(self.bashrc)} >/dev/null 2>&1 && cd {rdir} && exec {app} -case \"$PWD\""
+        script = f"source {shlex.quote(self.bashrc)} >/dev/null 2>&1 && cd {rdir} && exec {app} -case {rdir}"
         return CommandSpec(argv=self._wsl(script), cwd=str(case_dir))
 
     def stage_in(self, case_dir: Path) -> CommandSpec:
@@ -125,7 +143,7 @@ class WSLProvider(ExecutionProvider):
         rdir = self._rdir(case_dir)
         # The host copy is authoritative: start from an empty directory so no stale file of a
         # previous attempt (old time steps, a graceful-stop trigger) survives into this one.
-        script = f"rm -rf -- {rdir} && mkdir -p {rdir} && cp -a {src}/. {rdir}/"
+        script = f"{newer_results_guard(src, rdir)} && rm -rf -- {rdir} && mkdir -p {rdir} && cp -a {src}/. {rdir}/"
         return CommandSpec(argv=self._wsl(script), cwd=str(case_dir))
 
     def stage_out(self, case_dir: Path) -> CommandSpec:

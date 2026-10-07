@@ -1,0 +1,53 @@
+{
+  "case": "ahmed35",
+  "status": "unconverged",
+  "convergence": "not_converged",
+  "metrics": {
+    "Cd": 0.4611245834690278,
+    "Cl": 0.48544965345180086,
+    "Cs": 0.011926829226229329,
+    "Cm_pitch": -0.034355646525096976,
+    "Cm_yaw": 0.0017247683828770092,
+    "Cm_roll": 0.0024321642556844217,
+    "Cl_front": null,
+    "Cl_rear": null,
+    "drag_N": 49.75959523166668,
+    "lift_N": 52.3844946183333,
+    "downforce_N": -52.3844946183333,
+    "downforce_front_N": null,
+    "downforce_rear_N": null,
+    "side_N": 1.2870148675000004,
+    "pitch_Nm": -3.870411910041666,
+    "yaw_Nm": 0.1943076252770835,
+    "roll_Nm": 0.27400088353749985,
+    "CdA": 0.05166070933520212,
+    "ClA": 0.05438589557551215,
+    "balance_front_pct": null,
+    "efficiency": -1.052751622565373
+  },
+  "checks": [],
+  "comparisons": [],
+  "qualitative": [
+    "Cd(35\u00b0) < Cd(25\u00b0) when both are run at the same level"
+  ],
+  "caveats": [],
+  "level": "coarse",
+  "project": "/tmp/claude-0/bench/ahmed35_coarse_20261007-041924",
+  "run_id": "run-20261007-001927-3ae098",
+  "cells": 238507,
+  "wall_seconds": 555.4688274860382,
+  "app_version": "0.1.0",
+  "foam_version": "v2606",
+  "provider": "local",
+  "date": "2026-10-07T00:28:40+00:00",
+  "hardware": {
+    "os": "Linux-6.18.44-fc-v70-x86_64-with-glibc2.39",
+    "machine": "x86_64",
+    "processor": "x86_64",
+    "physical_cores": 2,
+    "logical_cores": 2,
+    "memory_gb": 7.8,
+    "python": "3.13.16",
+    "hostname_hash": "5bce98f73f3e"
+  }
+}

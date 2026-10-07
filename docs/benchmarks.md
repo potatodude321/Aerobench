@@ -59,7 +59,8 @@ level.
 
 ## Recorded results
 
-Development records, OpenFOAM v2606 (Linux packages) on a 2-core x86-64 virtual machine
+Development records (JSON in [benchmark-records/](benchmark-records/)), OpenFOAM v2606
+(Linux packages) on a 2-core x86-64 virtual machine
 with 7.8 GB memory, AeroBench 0.1.0. They document the behaviour of the pipeline; they are
 **not** release validation records (see "Release records" below). Coefficients are means
 over the final 20 % of iterations.

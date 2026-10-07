@@ -1,0 +1,79 @@
+{
+  "case": "ahmed25",
+  "status": "outside_band",
+  "convergence": "converged",
+  "metrics": {
+    "Cd": 0.36272849577745314,
+    "Cl": 0.3484857003712719,
+    "Cs": -0.0026175073926458636,
+    "Cm_pitch": -0.010518281197244978,
+    "Cm_yaw": -7.646260465802992e-05,
+    "Cm_roll": -0.0005293226022716835,
+    "Cl_front": null,
+    "Cl_rear": null,
+    "drag_N": 39.14174992166665,
+    "lift_N": 37.60482094458334,
+    "downforce_N": -37.60482094458334,
+    "downforce_front_N": null,
+    "downforce_rear_N": null,
+    "side_N": -0.2824531873666666,
+    "pitch_Nm": -1.1849604049583333,
+    "yaw_Nm": -0.008614065100624997,
+    "roll_Nm": -0.05963201718791664,
+    "CdA": 0.04063719883893963,
+    "ClA": 0.03904154998399433,
+    "balance_front_pct": null,
+    "efficiency": -0.9607342803998511
+  },
+  "checks": [
+    {
+      "quantity": "Cd",
+      "value": 0.36272849577745314,
+      "band": [
+        0.25,
+        0.34
+      ],
+      "within_band": false
+    }
+  ],
+  "comparisons": [
+    {
+      "quantity": "Cd",
+      "value": 0.36272849577745314,
+      "reference": 0.285,
+      "source": "Ahmed, Ramm & Faltin, SAE 840300 (1984)",
+      "difference_pct": 27.273156413141464
+    },
+    {
+      "quantity": "Cd",
+      "value": 0.36272849577745314,
+      "reference": 0.299,
+      "source": "Meile et al. (2011), 25\u00b0 slant at 40 m/s",
+      "difference_pct": 21.313878186439183
+    }
+  ],
+  "qualitative": [],
+  "caveats": [
+    "Steady k-\u03c9 SST is known to over-predict the 25\u00b0 slant separation (higher Cd); results within the band are consistent with published RANS studies, not proof of accuracy for every configuration.",
+    "Stilt positions in the generated geometry are approximate; stilt drag is a few percent of the total."
+  ],
+  "level": "coarse",
+  "project": "/tmp/claude-0/bench/ahmed25_coarse_20261007-015612",
+  "run_id": "run-20261006-215614-3719b2",
+  "cells": 237020,
+  "wall_seconds": 539.9506742954254,
+  "app_version": "0.1.0",
+  "foam_version": "v2606",
+  "provider": "local",
+  "date": "2026-10-06T22:05:12+00:00",
+  "hardware": {
+    "os": "Linux-6.18.44-fc-v70-x86_64-with-glibc2.39",
+    "machine": "x86_64",
+    "processor": "x86_64",
+    "physical_cores": 2,
+    "logical_cores": 2,
+    "memory_gb": 7.8,
+    "python": "3.13.16",
+    "hostname_hash": "5bce98f73f3e"
+  }
+}

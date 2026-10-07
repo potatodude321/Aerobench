@@ -111,6 +111,7 @@ _register(BenchmarkCase(
     references=[
         Reference("Cd", value=0.285, source="Ahmed, Ramm & Faltin, SAE 840300 (1984)", notes="Original measurement"),
         Reference("Cd", value=0.299, source="Meile et al. (2011), 25° slant at 40 m/s", notes="Later measurement in a different facility"),
+        Reference("Cl", value=0.345, source="Meile et al. (2011), 25° slant at 40 m/s", notes="Lift; informative comparison, no band"),
     ],
     acceptance={"Cd": (0.25, 0.34)},
     caveats=["Steady k-ω SST is known to over-predict the 25° slant separation (higher Cd); results within the band are consistent with "

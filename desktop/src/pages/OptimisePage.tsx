@@ -168,7 +168,7 @@ export function OptimisePage() {
   );
 
   return (
-    <PageLayout side={side} sideWidth={460}>
+    <PageLayout side={side} sideWidth={460} pad>
       {d ? <OptimisationView d={d} reload={reload} onPromote={(id) => promoteDesign(d.id, id, refreshProject)} /> : (
         <EmptyState title="No optimisation selected">
           Choose design variables (operating point, pose or geometry parameters), objectives and constraints. Every evaluation is a full mesh + RANS run;
@@ -194,8 +194,8 @@ function OptimisationView({ d, reload, onPromote }: { d: any; reload: () => void
         yAxis: { type: "value", name: objs[0].metric, scale: true, ...axisStyle },
         series: [
           { name: "evaluated", type: "scatter", data: h.filter((x: any) => x.value != null).map((x: any) => [x.idx, x.value]), symbolSize: 7,
-            itemStyle: { color: (p: any) => (h.find((x: any) => x.idx === p.data[0])?.feasible ? "#22b8cf" : "#ff922b") } },
-          { name: "best feasible", type: "line", step: "end", data: h.filter((x: any) => x.best != null).map((x: any) => [x.idx, x.best]), showSymbol: false, lineStyle: { color: "#51cf66" } },
+            itemStyle: { color: (p: any) => (h.find((x: any) => x.idx === p.data[0])?.feasible ? "#8db7e0" : "#d6a24a") } },
+          { name: "best feasible", type: "line", step: "end", data: h.filter((x: any) => x.best != null).map((x: any) => [x.idx, x.best]), showSymbol: false, lineStyle: { color: "#74b98f" } },
         ],
       };
     }
@@ -207,9 +207,9 @@ function OptimisationView({ d, reload, onPromote }: { d: any; reload: () => void
       xAxis: { type: "value", name: `${objs[0].metric} (${objs[0].sense})`, nameLocation: "middle", nameGap: 24, scale: true, ...axisStyle },
       yAxis: { type: "value", name: `${objs[1].metric} (${objs[1].sense})`, scale: true, ...axisStyle },
       series: [
-        { name: "designs", type: "scatter", data: done.filter((x: any) => !pareto.has(x.id)).map(pt), symbolSize: 7, itemStyle: { color: "#4dabf7", opacity: 0.6 } },
+        { name: "designs", type: "scatter", data: done.filter((x: any) => !pareto.has(x.id)).map(pt), symbolSize: 7, itemStyle: { color: "#8db7e0", opacity: 0.6 } },
         { name: "Pareto front", type: "line", data: done.filter((x: any) => pareto.has(x.id)).map(pt).sort((a: any, b: any) => a[0] - b[0]), symbolSize: 10,
-          itemStyle: { color: "#51cf66" }, lineStyle: { type: "dashed" } },
+          itemStyle: { color: "#74b98f" }, lineStyle: { type: "dashed" } },
       ],
     };
   }, [d]);

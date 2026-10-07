@@ -12,6 +12,8 @@ export interface Abg {
   positions: Float32Array;
   indices?: Uint32Array;
   lines?: Uint32Array;
+  /** wireframe line pairs (mesh views) */
+  edges?: Uint32Array;
   scalars?: Float32Array;
   vectors?: Float32Array;
   partIds?: Uint16Array;
@@ -40,6 +42,9 @@ export function decodeAbg(buf: ArrayBuffer): Abg {
         break;
       case "lines":
         out.lines = new Uint32Array(bytes);
+        break;
+      case "edges":
+        out.edges = new Uint32Array(bytes);
         break;
       case "scalars":
         out.scalars = new Float32Array(bytes);

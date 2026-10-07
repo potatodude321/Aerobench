@@ -2,6 +2,7 @@ import { Button, Container, Group, NumberInput, Paper, Stack, Switch, Text, Text
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import { EnvironmentCard } from "../components/EnvironmentCard";
+import { SectionTitle } from "../components/ui";
 import { notifyError, notifyOk } from "../components/notify";
 import { useApp } from "../state/store";
 
@@ -28,7 +29,10 @@ export function SettingsPage() {
         Settings
       </Title>
       <Stack>
-        <EnvironmentCard />
+        <div>
+          <SectionTitle first>This computer</SectionTitle>
+          <EnvironmentCard />
+        </div>
         <Paper withBorder p="md" radius="md">
           <Text fw={700} mb="xs">
             Solver

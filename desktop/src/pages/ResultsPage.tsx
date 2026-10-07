@@ -1,15 +1,11 @@
 import {
   ActionIcon,
-  Alert,
-  Badge,
   Button,
   Group,
   Loader,
   NumberInput,
-  Paper,
   ScrollArea,
   Select,
-  SimpleGrid,
   Slider,
   Stack,
   Table,
@@ -23,8 +19,8 @@ import { bridge } from "../api/bridge";
 import { api } from "../api/client";
 import { CoefficientChart, ResidualChart } from "../charts/RunCharts";
 import { ColorLegend, fmt } from "../components/ColorLegend";
-import { notifyError, notifyOk } from "../components/notify";
-import { DiagnosticList, EmptyState, KeyValue, Kpi, SectionTitle, StatusBadge } from "../components/ui";
+import { notifyError, notifyInfo, notifyOk } from "../components/notify";
+import { DiagnosticList, EmptyState, Hint, KeyValue, Kpi, Readouts, SectionTitle, StatusBadge } from "../components/ui";
 import { pid, useApp } from "../state/store";
 import { decodeAbg } from "../viewport/abg";
 import { COLORMAPS } from "../viewport/colormaps";
@@ -43,6 +39,8 @@ export interface Layer {
   visible: boolean;
   opacity: number;
   units?: string;
+  /** share of points without a value (shown grey) */
+  missing?: number;
 }
 
 export function useFieldInfo() {
@@ -76,6 +74,13 @@ export async function loadLayer(viewer: Viewer, runId: string, preset: any, fiel
     units: fi.units,
   };
   viewer.setResult(layer.id, abg, { colormap: layer.colormap, range: layer.range, opacity: 1 });
+  // a view without values (grey) must never pass silently
+  const sc = abg.scalars;
+  if (sc && sc.length) {
+    let finite = 0;
+    for (let i = 0; i < sc.length; i++) if (Number.isFinite(sc[i])) finite++;
+    layer.missing = 1 - finite / sc.length;
+  }
   return layer;
 }
 
@@ -129,6 +134,8 @@ export function ResultsPage() {
     setLoadingPreset(p.id);
     try {
       const layer = await loadLayer(viewer.current, runId, p, fieldInfo);
+      if ((layer.missing ?? 0) > 0.05)
+        notifyInfo(`${Math.round((layer.missing ?? 0) * 100)} % of “${p.label}” has no ${layer.field} values and is shown grey. Re-read the results from the case on the Run page, or open the run in ParaView to check the files.`, "Incomplete field");
       setLayers((ls) => [...ls.filter((l) => l.id !== layer.id), layer]);
       setActiveLayer(layer.id);
       if (fit) viewer.current.view("iso");
@@ -186,199 +193,202 @@ export function ResultsPage() {
   const active = layers.find((l) => l.id === activeLayer) || layers[layers.length - 1];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", padding: 10, gap: 10, boxSizing: "border-box" }}>
-      <Group justify="space-between">
-        <Group gap="xs">
-          <Select size="xs" w={420} value={runId} onChange={(v) => selectRun(v)} data={completed.map((r) => ({ value: r.id, label: `${r.label} — ${r.id}` }))} />
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 18px", background: "var(--ab-surface)" }}>
+        <Group gap={16} wrap="nowrap">
+          <h1 className="ab-page-title" style={{ fontSize: 19 }}>
+            Results
+          </h1>
+          <Select size="xs" w={380} value={runId} onChange={(v) => selectRun(v)} data={completed.map((r) => ({ value: r.id, label: `${r.label} — ${r.id}` }))} />
           {run && <StatusBadge status={run.status} />}
           {conv && <StatusBadge status={conv.status} />}
         </Group>
-        <Group gap="xs">
-          {bridge && vizStatus?.paraview && (
-            <Button size="xs" variant="default" leftSection={<IconExternalLink size={14} />} onClick={openInParaView}>
-              Open in ParaView
-            </Button>
-          )}
-        </Group>
-      </Group>
+        {bridge && vizStatus?.paraview && (
+          <Button size="xs" variant="default" leftSection={<IconExternalLink size={14} />} onClick={openInParaView}>
+            Open in ParaView
+          </Button>
+        )}
+      </div>
       {run && (
-        <SimpleGrid cols={{ base: 3, lg: 6 }} spacing="xs">
-          <Kpi label="Cd" value={m.Cd} digits={4} sub={`CdA ${fmt(m.CdA, 3)} m² · ${fmt(m.drag_N, 1)} N`} sign="Drag coefficient, + rearward" />
-          <Kpi label="Cl" value={m.Cl} digits={4} sub={`Downforce ${fmt(m.downforce_N, 1)} N`} sign="Lift coefficient, + up (downforce = −lift)" />
+        <Readouts>
+          <Kpi label="Drag coefficient Cd" value={m.Cd} digits={4} sub={`CdA ${fmt(m.CdA, 3)} m², drag ${fmt(m.drag_N, 1)} N`} sign="Positive rearward" />
+          <Kpi label="Lift coefficient Cl" value={m.Cl} digits={4} sub={`Downforce ${fmt(m.downforce_N, 1)} N`} sign="Positive up; downforce = −lift" />
           <Kpi label="Front downforce" value={m.downforce_front_N} units="N" digits={1} sub={`Cl front ${fmt(m.Cl_front, 4)}`} />
           <Kpi label="Rear downforce" value={m.downforce_rear_N} units="N" digits={1} sub={`Cl rear ${fmt(m.Cl_rear, 4)}`} />
-          <Kpi label="Aero balance (front)" value={m.balance_front_pct} units="%" digits={1}
-            color={res.balance_ill_conditioned ? "yellow" : undefined}
-            sub={res.balance_ill_conditioned ? "undefined: net lift or near-zero downforce" : "front DF / total DF"} />
+          <Kpi label="Aero balance, front" value={m.balance_front_pct} units="%" digits={1}
+            color={res.balance_ill_conditioned ? "var(--ab-warn)" : undefined}
+            sub={res.balance_ill_conditioned ? "Not meaningful: the car makes net lift" : "Front ÷ total downforce"} />
           <Kpi label="Side force Cs" value={m.Cs} digits={4} sub={`Yaw moment ${fmt(m.yaw_Nm, 1)} N·m`} />
-        </SimpleGrid>
+        </Readouts>
       )}
-      <div style={{ flex: 1, display: "flex", gap: 10, minHeight: 0 }}>
-        <Paper withBorder radius="md" style={{ flex: 1, overflow: "hidden", position: "relative" }}>
+      <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+        <div style={{ flex: 1, position: "relative", minWidth: 0, display: "flex" }}>
           <Viewport3D onReady={(v) => (viewer.current = v)}>
             {active && <ColorLegend title={fieldInfo[active.field]?.label || active.field} colormap={active.colormap} range={active.range} units={active.units} />}
             {loadingPreset && (
-              <Group style={{ position: "absolute", top: 12, left: 12 }} gap={6}>
-                <Loader size="xs" />
-                <Text size="xs">ParaView is processing…</Text>
-              </Group>
+              <div className="ab-viewport-note">
+                <Loader size={12} color="ice" />
+                ParaView is preparing the view…
+              </div>
             )}
           </Viewport3D>
-        </Paper>
-        <Paper withBorder radius="md" style={{ width: 360, display: "flex", flexDirection: "column" }}>
+        </div>
+        <aside className="ab-inspector" style={{ width: 360, borderRight: 0, borderLeft: "1px solid var(--ab-line)" }}>
           <Tabs defaultValue="viz" style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-            <Tabs.List>
-              <Tabs.Tab value="viz">Visualise</Tabs.Tab>
+            <Tabs.List px={10}>
+              <Tabs.Tab value="viz">Views</Tabs.Tab>
               <Tabs.Tab value="summary">Summary</Tabs.Tab>
               <Tabs.Tab value="history">History</Tabs.Tab>
             </Tabs.List>
-            <ScrollArea style={{ flex: 1 }} p="sm">
-              <Tabs.Panel value="viz">
-                {!vizStatus?.available && (
-                  <Alert color="yellow" variant="light" p="xs" mb="xs">
-                    <Text size="xs">{vizStatus?.message || "ParaView is not available; install ParaView 6.2 for field visualisation."}</Text>
-                  </Alert>
-                )}
-                <SectionTitle>Automotive views</SectionTitle>
-                <Stack gap={4}>
-                  {presets.map((p) => (
-                    <Group key={p.id} justify="space-between" wrap="nowrap">
-                      <Button size="compact-xs" variant={layers.some((l) => l.id === p.id) ? "light" : "subtle"} onClick={() => addPreset(p)}
-                        loading={loadingPreset === p.id} disabled={!vizStatus?.available} style={{ flex: 1 }} justify="flex-start">
-                        {p.label}
-                      </Button>
-                      {(p.op === "surface" || p.op === "slice") && (
-                        <Tooltip label="High-quality image rendered by ParaView">
-                          <ActionIcon size="sm" variant="subtle" onClick={() => paraviewShot(p.id)} disabled={!vizStatus?.available}>
-                            <IconCamera size={14} />
-                          </ActionIcon>
-                        </Tooltip>
-                      )}
-                    </Group>
-                  ))}
-                </Stack>
-                <SectionTitle>Layers</SectionTitle>
-                <Stack gap={6}>
-                  {layers.map((l) => (
-                    <Paper key={l.id} withBorder p={6} onClick={() => setActiveLayer(l.id)} style={{ borderColor: active?.id === l.id ? "var(--mantine-color-cyan-7)" : undefined }}>
-                      <Group justify="space-between" wrap="nowrap">
-                        <Text size="xs" fw={600} lineClamp={1}>
-                          {l.label}
-                        </Text>
-                        <Group gap={2} wrap="nowrap">
-                          <ActionIcon size="sm" variant="subtle" onClick={() => updateLayer(l.id, { visible: !l.visible })}>
-                            {l.visible ? <IconEye size={14} /> : <IconEyeOff size={14} />}
-                          </ActionIcon>
-                          <ActionIcon size="sm" variant="subtle" color="red" onClick={() => removeLayer(l.id)}>
-                            <IconTrash size={14} />
-                          </ActionIcon>
+            <ScrollArea style={{ flex: 1 }} scrollbarSize={6}>
+              <div style={{ padding: "4px 16px 24px" }}>
+                <Tabs.Panel value="viz">
+                  {!vizStatus?.available && (
+                    <Hint style={{ color: "var(--ab-warn)", marginTop: 12 }}>{vizStatus?.message || "ParaView is not available, so flow fields cannot be shown."}</Hint>
+                  )}
+                  <SectionTitle first>Standard views</SectionTitle>
+                  <Stack gap={0}>
+                    {presets.map((p) => {
+                      const on = layers.some((l) => l.id === p.id);
+                      return (
+                        <Group key={p.id} justify="space-between" wrap="nowrap" gap={4}>
+                          <Button size="compact-sm" variant="subtle" color={on ? "ice" : "gray"} onClick={() => addPreset(p)} loading={loadingPreset === p.id}
+                            disabled={!vizStatus?.available} style={{ flex: 1, fontWeight: on ? 600 : 400 }} justify="flex-start">
+                            {p.label}
+                          </Button>
+                          {(p.op === "surface" || p.op === "slice") && (
+                            <Tooltip label="Render a high-quality image with ParaView">
+                              <ActionIcon size="sm" variant="subtle" color="gray" onClick={() => paraviewShot(p.id)} disabled={!vizStatus?.available} aria-label="ParaView image">
+                                <IconCamera size={14} />
+                              </ActionIcon>
+                            </Tooltip>
+                          )}
                         </Group>
-                      </Group>
-                      {active?.id === l.id && (
-                        <Stack gap={4} mt={4}>
-                          <Select size="xs" data={COLORMAPS} value={l.colormap} onChange={(c) => c && updateLayer(l.id, { colormap: c })} />
-                          <Group grow gap={4}>
-                            <NumberInput size="xs" label="min" value={l.range[0]} decimalScale={4} onChange={(v) => typeof v === "number" && updateLayer(l.id, { range: [v, l.range[1]] })} />
-                            <NumberInput size="xs" label="max" value={l.range[1]} decimalScale={4} onChange={(v) => typeof v === "number" && updateLayer(l.id, { range: [l.range[0], v] })} />
-                          </Group>
-                          <Group justify="space-between">
-                            <Text size="xs" c="dimmed">
-                              data {fmt(l.dataRange[0], 3)} … {fmt(l.dataRange[1], 3)}
-                            </Text>
-                            <Button size="compact-xs" variant="subtle" onClick={() => updateLayer(l.id, { range: l.dataRange })}>
-                              fit
-                            </Button>
-                          </Group>
-                          <Text size="xs">Opacity</Text>
-                          <Slider size="xs" min={0.1} max={1} step={0.05} value={l.opacity} onChange={(v) => updateLayer(l.id, { opacity: v })} />
-                        </Stack>
-                      )}
-                    </Paper>
-                  ))}
-                </Stack>
-                {shot && (
-                  <>
-                    <SectionTitle right={<Button size="compact-xs" variant="subtle" onClick={() => setShot(null)}>close</Button>}>ParaView render</SectionTitle>
-                    <img src={shot} style={{ width: "100%", borderRadius: 6 }} />
-                  </>
-                )}
-              </Tabs.Panel>
-              <Tabs.Panel value="summary">
-                {run && (
-                  <Stack gap="xs">
-                    <SectionTitle>Convergence</SectionTitle>
-                    <Text size="xs">{conv?.summary}</Text>
-                    <Text size="xs" c="dimmed">
-                      Averaged over iterations {run.metrics?.averaging_window?.map((x: number) => fmt(x, 0)).join("–")}
-                    </Text>
-                    <SectionTitle>Operating condition</SectionTitle>
-                    <KeyValue rows={[["Speed", `${fmt(op.speed, 2)} m/s`], ["Yaw", `${fmt(op.yaw_deg, 2)}°`], ["Ground", op.ground], ["Wheels rotating", op.wheels_rotate ? "yes" : "no"]]} />
-                    <SectionTitle>Reference</SectionTitle>
-                    <KeyValue rows={[
-                      ["Area", `${fmt(run.metrics?.reference?.area, 4)} m²`],
-                      ["Length", `${fmt(run.metrics?.reference?.length, 4)} m`],
-                      ["q", `${fmt(run.metrics?.reference?.q, 1)} Pa`],
-                      ["Axes", run.metrics?.reference?.axes],
-                    ]} />
-                    <SectionTitle>Components</SectionTitle>
-                    <Table className="compact">
-                      <Table.Thead>
-                        <Table.Tr>
-                          <Table.Th>Part</Table.Th>
-                          <Table.Th>Cd</Table.Th>
-                          <Table.Th>Cl</Table.Th>
-                          <Table.Th>DF [N]</Table.Th>
-                        </Table.Tr>
-                      </Table.Thead>
-                      <Table.Tbody>
-                        {Object.entries(comps).map(([k, c]: any) => (
-                          <Table.Tr key={k}>
-                            <Table.Td>{k}</Table.Td>
-                            <Table.Td>{fmt(c.Cd, 4)}</Table.Td>
-                            <Table.Td>{fmt(c.Cl, 4)}</Table.Td>
-                            <Table.Td>{fmt(c.downforce_N, 1)}</Table.Td>
-                          </Table.Tr>
-                        ))}
-                      </Table.Tbody>
-                    </Table>
-                    {run.metrics?.pressure_viscous && (
-                      <Text size="xs" c="dimmed">
-                        Drag split: pressure {fmt(run.metrics.pressure_viscous.Cd_pressure, 4)}, viscous {fmt(run.metrics.pressure_viscous.Cd_viscous, 4)}
-                      </Text>
-                    )}
-                    <SectionTitle>y+ (wall patches)</SectionTitle>
-                    <Table className="compact">
-                      <Table.Tbody>
-                        {Object.entries(run.metrics?.yplus || {}).filter(([k]) => k !== "ground").map(([k, v]: any) => (
-                          <Table.Tr key={k}>
-                            <Table.Td>{k}</Table.Td>
-                            <Table.Td>avg {fmt(v.average, 1)}</Table.Td>
-                            <Table.Td>max {fmt(v.max, 0)}</Table.Td>
-                          </Table.Tr>
-                        ))}
-                      </Table.Tbody>
-                    </Table>
-                    <DiagnosticList items={run.diagnostics} />
+                      );
+                    })}
                   </Stack>
-                )}
-              </Tabs.Panel>
-              <Tabs.Panel value="history">
-                <Text size="xs" fw={700}>
-                  Coefficients
-                </Text>
-                <CoefficientChart series={series} keys={["Cd", "Cl"]} window={run?.metrics?.averaging_window} height={220} />
-                <CoefficientChart series={series} keys={["balance_front_pct"]} window={run?.metrics?.averaging_window} height={180} />
-                <Text size="xs" fw={700}>
-                  Residuals
-                </Text>
-                <ResidualChart series={series} height={220} />
-                <Badge size="xs" variant="outline" mt="xs">
-                  dashboard values are averages over the shaded window
-                </Badge>
-              </Tabs.Panel>
+                  <SectionTitle>Shown</SectionTitle>
+                  {layers.length === 0 && <Hint>Pick a view above.</Hint>}
+                  <Stack gap={6}>
+                    {layers.map((l) => (
+                      <div key={l.id} onClick={() => setActiveLayer(l.id)}
+                        style={{ borderLeft: `2px solid ${active?.id === l.id ? "var(--ab-accent)" : "var(--ab-line)"}`, padding: "2px 0 4px 10px", cursor: "pointer" }}>
+                        <Group justify="space-between" wrap="nowrap">
+                          <Text size="sm" fw={active?.id === l.id ? 600 : 400} lineClamp={1}>
+                            {l.label}
+                          </Text>
+                          <Group gap={2} wrap="nowrap">
+                            <ActionIcon size="sm" variant="subtle" color="gray" onClick={(e) => { e.stopPropagation(); updateLayer(l.id, { visible: !l.visible }); }} aria-label={l.visible ? "Hide" : "Show"}>
+                              {l.visible ? <IconEye size={14} /> : <IconEyeOff size={14} />}
+                            </ActionIcon>
+                            <ActionIcon size="sm" variant="subtle" color="gray" onClick={(e) => { e.stopPropagation(); removeLayer(l.id); }} aria-label="Remove">
+                              <IconTrash size={14} />
+                            </ActionIcon>
+                          </Group>
+                        </Group>
+                        {(l.missing ?? 0) > 0.05 && <Hint style={{ color: "var(--ab-warn)" }}>{Math.round((l.missing ?? 0) * 100)} % without values (grey)</Hint>}
+                        {active?.id === l.id && (
+                          <Stack gap={6} mt={6}>
+                            <Select size="xs" label="Colour map" data={COLORMAPS} value={l.colormap} onChange={(c) => c && updateLayer(l.id, { colormap: c })} />
+                            <Group grow gap={6}>
+                              <NumberInput size="xs" label="From" value={l.range[0]} decimalScale={4} onChange={(v) => typeof v === "number" && updateLayer(l.id, { range: [v, l.range[1]] })} />
+                              <NumberInput size="xs" label="To" value={l.range[1]} decimalScale={4} onChange={(v) => typeof v === "number" && updateLayer(l.id, { range: [l.range[0], v] })} />
+                            </Group>
+                            <Group justify="space-between">
+                              <Hint>
+                                Data range {fmt(l.dataRange[0], 3)} to {fmt(l.dataRange[1], 3)}
+                              </Hint>
+                              <Button size="compact-xs" variant="subtle" onClick={() => updateLayer(l.id, { range: l.dataRange })}>
+                                Fit to data
+                              </Button>
+                            </Group>
+                            <Text size="xs" c="dimmed">
+                              Opacity
+                            </Text>
+                            <Slider size="xs" min={0.1} max={1} step={0.05} value={l.opacity} onChange={(v) => updateLayer(l.id, { opacity: v })} label={(v) => `${Math.round(v * 100)} %`} />
+                          </Stack>
+                        )}
+                      </div>
+                    ))}
+                  </Stack>
+                  {shot && (
+                    <>
+                      <SectionTitle right={<Button size="compact-xs" variant="subtle" onClick={() => setShot(null)}>Close</Button>}>ParaView image</SectionTitle>
+                      <img src={shot} style={{ width: "100%", borderRadius: 4 }} alt="ParaView rendering" />
+                    </>
+                  )}
+                </Tabs.Panel>
+                <Tabs.Panel value="summary">
+                  {run && (
+                    <>
+                      <SectionTitle first>Convergence</SectionTitle>
+                      <Text size="xs">{conv?.summary}</Text>
+                      <Hint style={{ marginTop: 4 }}>Values are averaged over iterations {run.metrics?.averaging_window?.map((x: number) => fmt(x, 0)).join("–")}.</Hint>
+                      <SectionTitle>Condition</SectionTitle>
+                      <KeyValue rows={[["Speed", `${fmt(op.speed, 2)} m/s`], ["Yaw", `${fmt(op.yaw_deg, 2)}°`], ["Ground", op.ground], ["Wheels rotating", op.wheels_rotate ? "Yes" : "No"]]} />
+                      <SectionTitle>Reference values</SectionTitle>
+                      <KeyValue rows={[
+                        ["Area", `${fmt(run.metrics?.reference?.area, 4)} m²`],
+                        ["Length", `${fmt(run.metrics?.reference?.length, 4)} m`],
+                        ["Dynamic pressure q", `${fmt(run.metrics?.reference?.q, 1)} Pa`],
+                        ["Axes", run.metrics?.reference?.axes],
+                      ]} />
+                      <SectionTitle>Per part</SectionTitle>
+                      <Table className="compact" withRowBorders={false}>
+                        <Table.Thead>
+                          <Table.Tr>
+                            <Table.Th>Part</Table.Th>
+                            <Table.Th>Cd</Table.Th>
+                            <Table.Th>Cl</Table.Th>
+                            <Table.Th>Downforce</Table.Th>
+                          </Table.Tr>
+                        </Table.Thead>
+                        <Table.Tbody>
+                          {Object.entries(comps).map(([k, c]: any) => (
+                            <Table.Tr key={k}>
+                              <Table.Td>{k}</Table.Td>
+                              <Table.Td>{fmt(c.Cd, 4)}</Table.Td>
+                              <Table.Td>{fmt(c.Cl, 4)}</Table.Td>
+                              <Table.Td>{fmt(c.downforce_N, 1)} N</Table.Td>
+                            </Table.Tr>
+                          ))}
+                        </Table.Tbody>
+                      </Table>
+                      {run.metrics?.pressure_viscous && (
+                        <Hint style={{ marginTop: 6 }}>
+                          Drag from pressure {fmt(run.metrics.pressure_viscous.Cd_pressure, 4)}, from friction {fmt(run.metrics.pressure_viscous.Cd_viscous, 4)}
+                        </Hint>
+                      )}
+                      <SectionTitle>y+ on the walls</SectionTitle>
+                      <Table className="compact" withRowBorders={false}>
+                        <Table.Tbody>
+                          {Object.entries(run.metrics?.yplus || {}).filter(([k]) => k !== "ground").map(([k, v]: any) => (
+                            <Table.Tr key={k}>
+                              <Table.Td>{k}</Table.Td>
+                              <Table.Td>mean {fmt(v.average, 1)}</Table.Td>
+                              <Table.Td>max {fmt(v.max, 0)}</Table.Td>
+                            </Table.Tr>
+                          ))}
+                        </Table.Tbody>
+                      </Table>
+                      <div style={{ marginTop: 12 }}>
+                        <DiagnosticList items={run.diagnostics} />
+                      </div>
+                    </>
+                  )}
+                </Tabs.Panel>
+                <Tabs.Panel value="history">
+                  <SectionTitle first>Coefficients</SectionTitle>
+                  <CoefficientChart series={series} keys={["Cd", "Cl"]} window={run?.metrics?.averaging_window} height={220} />
+                  <CoefficientChart series={series} keys={["balance_front_pct"]} window={run?.metrics?.averaging_window} height={180} />
+                  <SectionTitle>Residuals</SectionTitle>
+                  <ResidualChart series={series} height={220} />
+                  <Hint style={{ marginTop: 6 }}>The figures at the top are averages over the shaded window.</Hint>
+                </Tabs.Panel>
+              </div>
             </ScrollArea>
           </Tabs>
-        </Paper>
+        </aside>
       </div>
     </div>
   );

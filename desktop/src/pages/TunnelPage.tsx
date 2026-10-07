@@ -1,11 +1,12 @@
-import { Alert, Paper, SegmentedControl, Select, SimpleGrid, Slider, Stack, Switch, Text } from "@mantine/core";
+import { Button, SegmentedControl, Select, SimpleGrid, Slider, Switch, Text } from "@mantine/core";
+import { IconArrowRight } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { api } from "../api/client";
 import type { MeshPlan } from "../api/types";
 import { fmt } from "../components/ColorLegend";
 import { notifyError } from "../components/notify";
-import { KeyValue, NumField, PageLayout, SectionTitle, ValidationList } from "../components/ui";
+import { Hint, KeyValue, NumField, PageLayout, SectionTitle, ValidationList } from "../components/ui";
 import { pid, useApp } from "../state/store";
 import { decodeAbg } from "../viewport/abg";
 import { Viewer } from "../viewport/Viewer";
@@ -40,7 +41,7 @@ export function usePlan(): [MeshPlan | null, any, boolean] {
 }
 
 export function TunnelPage() {
-  const { project, patchConfig, geometryVersion } = useApp();
+  const { project, patchConfig, geometryVersion, setSection } = useApp();
   const cfg = project!.config;
   const t = cfg.tunnel;
   const op = cfg.operating;
@@ -77,8 +78,8 @@ export function TunnelPage() {
 
   const yawRange = t.design_yaw_range_deg;
   const side = (
-    <Stack gap="xs">
-      <SectionTitle>Domain preset</SectionTitle>
+    <>
+      <SectionTitle first>Size of the tunnel</SectionTitle>
       <SegmentedControl
         size="xs"
         fullWidth
@@ -91,72 +92,80 @@ export function TunnelPage() {
           { value: "custom", label: "Custom" },
         ]}
       />
-      <Text size="xs" c="dimmed">
-        Extents in vehicle lengths L, measured from the vehicle's nose, tail, sides and roof. No single rule is mandatory — the blockage ratio below shows the consequence.
-      </Text>
-      <SimpleGrid cols={2} spacing="xs">
-        <NumField label="Upstream" units="L" value={t.upstream} decimals={2} onCommit={(v) => patchConfig({ tunnel: { upstream: v, preset: "custom" } })} />
-        <NumField label="Downstream" units="L" value={t.downstream} decimals={2} onCommit={(v) => patchConfig({ tunnel: { downstream: v, preset: "custom" } })} />
-        <NumField label="Lateral (each side)" units="L" value={t.lateral} decimals={2} onCommit={(v) => patchConfig({ tunnel: { lateral: v, preset: "custom" } })} />
-        <NumField label="Above roof" units="L" value={t.top} decimals={2} onCommit={(v) => patchConfig({ tunnel: { top: v, preset: "custom" } })} />
+      <SimpleGrid cols={2} spacing="xs" mt={10}>
+        <NumField label="Ahead of the nose" units="L" value={t.upstream} decimals={2} onCommit={(v) => patchConfig({ tunnel: { upstream: v, preset: "custom" } })} />
+        <NumField label="Behind the tail" units="L" value={t.downstream} decimals={2} onCommit={(v) => patchConfig({ tunnel: { downstream: v, preset: "custom" } })} />
+        <NumField label="Beside each side" units="L" value={t.lateral} decimals={2} onCommit={(v) => patchConfig({ tunnel: { lateral: v, preset: "custom" } })} />
+        <NumField label="Above the roof" units="L" value={t.top} decimals={2} onCommit={(v) => patchConfig({ tunnel: { top: v, preset: "custom" } })} />
       </SimpleGrid>
+      <Hint style={{ marginTop: 6 }}>In vehicle lengths L. A larger tunnel disturbs the flow less but costs cells; the blockage ratio shows the consequence.</Hint>
       {plan && (
-        <Paper withBorder p="xs">
+        <div style={{ marginTop: 12 }}>
           <KeyValue
             rows={[
-              ["Domain", `${fmt(plan.domain_max[0] - plan.domain_min[0], 2)} × ${fmt(plan.domain_max[1] - plan.domain_min[1], 2)} × ${fmt(plan.domain_max[2] - plan.domain_min[2], 2)} m`],
+              ["Tunnel size", `${fmt(plan.domain_max[0] - plan.domain_min[0], 2)} × ${fmt(plan.domain_max[1] - plan.domain_min[1], 2)} × ${fmt(plan.domain_max[2] - plan.domain_min[2], 2)} m`],
               ["Blockage ratio", plan.blockage_ratio !== null ? `${(plan.blockage_ratio * 100).toFixed(2)} %` : "—"],
-              ["Background cells", `${plan.n_cells_block.join(" × ")} (${fmt(plan.base_cell, 3)} m)`],
-              ["Ground plane z", `${fmt(plan.ground_z, 4)} m`],
+              ["Background cells", `${plan.n_cells_block.join(" × ")}, ${fmt(plan.base_cell, 3)} m`],
+              ["Ground plane at", `z = ${fmt(plan.ground_z, 4)} m`],
             ]}
           />
           {plan.warnings.map((w, i) => (
-            <Alert key={i} color="yellow" variant="light" p={4} mt={4}>
-              <Text size="xs">{w}</Text>
-            </Alert>
+            <Hint key={i} style={{ color: "var(--ab-warn)", marginTop: 6 }}>
+              {w}
+            </Hint>
           ))}
-        </Paper>
+        </div>
       )}
 
       <SectionTitle>Ground</SectionTitle>
       <SegmentedControl size="xs" fullWidth value={op.ground} onChange={(v) => patchConfig({ operating: { ground: v } })}
         data={[{ value: "moving", label: "Moving (rolling road)" }, { value: "stationary", label: "Stationary" }]} />
       {op.ground === "moving" && (
-        <Select size="xs" label="Moving ground under yaw" value={op.yaw_ground_mode} onChange={(v) => v && patchConfig({ operating: { yaw_ground_mode: v } })}
-          data={[{ value: "road", label: "Road: ground moves along the vehicle axis at U∞·cos β" }, { value: "tunnel_belt", label: "Tunnel belt: belt moves with the freestream" }]} />
+        <Select size="xs" mt={10} label="When the car is yawed, the ground moves" value={op.yaw_ground_mode} onChange={(v) => v && patchConfig({ operating: { yaw_ground_mode: v } })}
+          data={[{ value: "road", label: "Along the car (road), at U∞·cos β" }, { value: "tunnel_belt", label: "With the air (tunnel belt)" }]} />
       )}
-      <Text size="xs" c="dimmed">Tyre contact patch: the floor is raised into the tyres by a fraction of the rolling radius to avoid line contacts.</Text>
-      <Slider size="sm" min={0} max={0.04} step={0.0025} value={t.contact_patch_fraction} label={(v) => `${(v * 100).toFixed(2)} % of R`}
-        onChangeEnd={(v) => patchConfig({ tunnel: { contact_patch_fraction: v } })} marks={[{ value: 0.01, label: "1%" }, { value: 0.02, label: "2%" }]} mb="md" />
+      <Text size="xs" c="dimmed" fw={500} mt={12} mb={2}>
+        Tyre contact patch
+      </Text>
+      <Slider size="sm" min={0} max={0.04} step={0.0025} value={t.contact_patch_fraction} label={(v) => `${(v * 100).toFixed(2)} % of the radius`}
+        onChangeEnd={(v) => patchConfig({ tunnel: { contact_patch_fraction: v } })} marks={[{ value: 0.01, label: "1 %" }, { value: 0.02, label: "2 %" }, { value: 0.03, label: "3 %" }]} mb={22} />
+      <Hint>The floor is raised slightly into the tyres so they stand on a small patch instead of touching it along a line, which meshes badly.</Hint>
 
       <SectionTitle>Symmetry</SectionTitle>
       <SegmentedControl size="xs" fullWidth value={t.symmetry} onChange={(v) => patchConfig({ tunnel: { symmetry: v } })}
-        data={[{ value: "full", label: "Full vehicle" }, { value: "half", label: "Half (symmetry plane)" }]} />
+        data={[{ value: "full", label: "Whole vehicle" }, { value: "half", label: "Half (symmetry plane)" }]} />
       <ValidationList issues={project!.validation} filter={(i) => i.path.startsWith("tunnel")} />
 
-      <SectionTitle>Far field and yaw</SectionTitle>
-      <Select size="xs" label="Far-field boundary conditions" value={t.farfield_bc} onChange={(v) => v && patchConfig({ tunnel: { farfield_bc: v } })}
+      <SectionTitle>Outer boundaries and yaw</SectionTitle>
+      <Select size="xs" label="Conditions on the tunnel walls" value={t.farfield_bc} onChange={(v) => v && patchConfig({ tunnel: { farfield_bc: v } })}
         data={[
-          { value: "auto", label: "Automatic (inlet/outlet at 0°, freestream when yawed)" },
-          { value: "inlet_outlet_slip", label: "Velocity inlet / pressure outlet / slip walls" },
-          { value: "freestream", label: "Freestream on all far-field faces" },
+          { value: "auto", label: "Automatic (inlet and outlet straight ahead, free stream when yawed)" },
+          { value: "inlet_outlet_slip", label: "Velocity inlet, pressure outlet, slip walls" },
+          { value: "freestream", label: "Free stream on every outer face" },
         ]} />
-      <Switch size="xs" mt={4} label="Size the domain and wake refinement for a yaw range (one mesh for a yaw sweep)"
+      <Switch size="xs" mt={12} label="Prepare one mesh for a range of yaw angles"
         checked={!!yawRange} onChange={(e) => patchConfig({ tunnel: { design_yaw_range_deg: e.currentTarget.checked ? [-10, 10] : null } })} />
       {yawRange && (
-        <SimpleGrid cols={2} spacing="xs">
-          <NumField label="Yaw min" units="°" value={yawRange[0]} decimals={1} onCommit={(v) => patchConfig({ tunnel: { design_yaw_range_deg: [v, yawRange[1]] } })} />
-          <NumField label="Yaw max" units="°" value={yawRange[1]} decimals={1} onCommit={(v) => patchConfig({ tunnel: { design_yaw_range_deg: [yawRange[0], v] } })} />
+        <SimpleGrid cols={2} spacing="xs" mt={8}>
+          <NumField label="Yaw from" units="°" value={yawRange[0]} decimals={1} onCommit={(v) => patchConfig({ tunnel: { design_yaw_range_deg: [v, yawRange[1]] } })} />
+          <NumField label="Yaw to" units="°" value={yawRange[1]} decimals={1} onCommit={(v) => patchConfig({ tunnel: { design_yaw_range_deg: [yawRange[0], v] } })} />
         </SimpleGrid>
       )}
-    </Stack>
+    </>
   );
 
   return (
-    <PageLayout side={side}>
-      <Paper withBorder radius="md" style={{ flex: 1, overflow: "hidden" }}>
-        <Viewport3D onReady={(v) => (viewer.current = v)} />
-      </Paper>
+    <PageLayout
+      side={side}
+      title="Tunnel"
+      lede="The virtual wind tunnel around the vehicle: its size, the road surface and how the outer boundaries behave."
+      footer={
+        <Button fullWidth variant="default" rightSection={<IconArrowRight size={15} />} onClick={() => setSection("mesh")}>
+          Continue to the mesh
+        </Button>
+      }
+    >
+      <Viewport3D onReady={(v) => (viewer.current = v)} />
     </PageLayout>
   );
 }

@@ -26,17 +26,17 @@ test("create, import, close and reopen a project", async () => {
     const win = await app.firstWindow();
     win.on("console", (m) => { if (m.type() === "error") console.log("[renderer]", m.text()); });
     win.on("pageerror", (e) => console.log("[pageerror]", e.message));
-    await expect(win.getByText("Automotive external aerodynamics")).toBeVisible({ timeout: 90_000 });
-    await expect(win.getByText("Environment")).toBeVisible();
+    await expect(win.getByText("Recent projects")).toBeVisible({ timeout: 90_000 });
+    await expect(win.getByText("This computer")).toBeVisible();
 
-    await win.getByLabel("Project name").fill("E2E car");
-    await win.getByLabel("Location (parent folder)").fill(work);
+    await win.getByLabel("Name", { exact: true }).fill("E2E car");
+    await win.getByLabel("Keep it in").fill(work);
     await win.getByRole("button", { name: "Create project" }).click();
     await expect(win.getByText("E2E car").first()).toBeVisible();
 
-    await win.getByPlaceholder("Browse or paste a path…").fill(stl);
-    await win.getByRole("button", { name: "Import" }).click();
-    await expect(win.getByText("No geometry problems detected.")).toBeVisible({ timeout: 60_000 });
+    await win.getByPlaceholder("Or paste a file path and press Enter").fill(stl);
+    await win.getByPlaceholder("Or paste a file path and press Enter").press("Enter");
+    await expect(win.getByText("No problems found in the surface.")).toBeVisible({ timeout: 60_000 });
     await expect(win.getByText("wheel_FL").first()).toBeVisible();
 
     if (process.env.AEROBENCH_E2E_SOLVE === "1") {
@@ -44,7 +44,7 @@ test("create, import, close and reopen a project", async () => {
       test.setTimeout(45 * 60_000);
       await win.locator('nav >> text="Mesh"').click();
       await win.getByText("Fast", { exact: true }).first().click();
-      await expect(win.getByText("Estimated cells")).toBeVisible();
+      await expect(win.getByText("Expected cells")).toBeVisible();
       await win.locator('nav >> text="Physics"').click();
       const iterations = win.getByRole("textbox", { name: "Iterations", exact: true });
       await iterations.fill("300");
@@ -56,7 +56,7 @@ test("create, import, close and reopen a project", async () => {
 
     await win.locator('nav >> text="Project"').click();
     await win.getByRole("button", { name: "Close project" }).click();
-    await expect(win.getByText("Open project")).toBeVisible();
+    await expect(win.getByText("Recent projects")).toBeVisible();
     await win.getByText(/E2E.car/).first().click();
     await expect(win.getByText("synthetic_car.stl").or(win.getByText("car.stl")).first()).toBeVisible({ timeout: 30_000 });
   } catch (e) {

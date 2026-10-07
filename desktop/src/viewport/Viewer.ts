@@ -7,7 +7,9 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { Abg } from "./abg";
-import { PART_COLORS, sampleColormap } from "./colormaps";
+import { LEVEL_COLORS, PART_COLORS, WHEEL_COLOR, sampleColormap } from "./colormaps";
+
+export const VIEWPORT_BG = 0x111418;
 
 export interface CameraState {
   position: [number, number, number];
@@ -22,6 +24,24 @@ export interface ResultStyle {
   opacity?: number;
   visible?: boolean;
   lineWidth?: number;
+}
+
+export interface MeshLayerStyle {
+  /** surface: fill only; edges: fill with cell edges; wireframe: edges only */
+  mode: "surface" | "edges" | "wireframe";
+  colorBy?: "solid" | "level";
+  color?: number;
+  wireColor?: number;
+  visible?: boolean;
+  /** cut away by the section plane (surfaces), unlike the cut itself */
+  clip?: boolean;
+}
+
+interface MeshLayerEntry {
+  group: THREE.Group;
+  fill: THREE.Mesh | null;
+  edges: THREE.LineSegments | null;
+  style: MeshLayerStyle;
 }
 
 interface ResultEntry {
@@ -40,16 +60,22 @@ export class Viewer {
   private geometry = new THREE.Group();
   private overlays = new THREE.Group();
   private results = new THREE.Group();
+  private meshGroup = new THREE.Group();
   private resultMap = new Map<string, ResultEntry>();
+  private meshLayers = new Map<string, MeshLayerEntry>();
   private raf = 0;
   private dirty = true;
   private ro: ResizeObserver;
   private lastCamEmit = 0;
   onCameraChange?: (c: CameraState) => void;
   private suppressEmit = false;
-  partMeshes: { name: string; mesh: THREE.Mesh }[] = [];
+  /** One material per vehicle part (all parts share one indexed geometry). */
+  parts: { name: string; material: THREE.MeshStandardMaterial }[] = [];
+  private geometryBase: THREE.Box3 | null = null;
+  /** Section plane of a mesh cut: surfaces on the camera's side of it are cut away. */
+  private section: THREE.Plane | null = null;
 
-  constructor(private host: HTMLElement, background = 0x14171d) {
+  constructor(private host: HTMLElement, background = VIEWPORT_BG) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setClearColor(background, 1);
@@ -72,7 +98,8 @@ export class Viewer {
     dir.position.set(-1, -1, 2);
     this.camera.add(dir);
     this.scene.add(this.camera);
-    this.scene.add(this.geometry, this.overlays, this.results);
+    this.geometry.matrixAutoUpdate = false;
+    this.scene.add(this.geometry, this.overlays, this.results, this.meshGroup);
     this.buildTriad();
     this.ro = new ResizeObserver(() => this.resize());
     this.ro.observe(host);
@@ -95,6 +122,7 @@ export class Viewer {
     this.clearGroup(this.geometry);
     this.clearGroup(this.overlays);
     this.clearGroup(this.results);
+    this.clearGroup(this.meshGroup);
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
@@ -120,6 +148,7 @@ export class Viewer {
 
   private render(): void {
     const r = this.renderer;
+    if (this.section && this.section.distanceToPoint(this.camera.position) > 0) this.section.negate();
     const w = this.host.clientWidth;
     const h = this.host.clientHeight;
     r.setViewport(0, 0, w, h);
@@ -153,16 +182,16 @@ export class Viewer {
       sp.scale.set(0.5, 0.5, 1);
       this.triadScene.add(sp);
     };
-    mk(new THREE.Vector3(1, 0, 0), 0xff6b6b, "x");
-    mk(new THREE.Vector3(0, 1, 0), 0x51cf66, "y");
-    mk(new THREE.Vector3(0, 0, 1), 0x4dabf7, "z");
+    mk(new THREE.Vector3(1, 0, 0), 0xd98282, "x");
+    mk(new THREE.Vector3(0, 1, 0), 0x86bf98, "y");
+    mk(new THREE.Vector3(0, 0, 1), 0x8db7e0, "z");
   }
 
   textSprite(text: string, color = 0xffffff, size = 64): THREE.Sprite {
     const c = document.createElement("canvas");
     c.width = c.height = 128;
     const g = c.getContext("2d")!;
-    g.font = `bold ${size}px sans-serif`;
+    g.font = `600 ${size}px Barlow, "Segoe UI", sans-serif`;
     g.fillStyle = "#" + color.toString(16).padStart(6, "0");
     g.textAlign = "center";
     g.textBaseline = "middle";
@@ -183,48 +212,68 @@ export class Viewer {
   }
 
   // ------------------------------------------------------------------ vehicle geometry
+  /**
+   * Vehicle parts as ONE indexed geometry whose triangles are sorted by part (a counting sort
+   * over typed arrays) with one draw group and material per part: no per-triangle JavaScript
+   * objects, no normal computation (flat shading from screen-space derivatives). A 400k
+   * triangle model is ready in a few milliseconds instead of freezing the window.
+   */
   setGeometry(abg: Abg | null, opts: { opacity?: number; colorByPart?: boolean; hidden?: string[] } = {}): void {
     this.clearGroup(this.geometry);
-    this.partMeshes = [];
+    this.parts = [];
+    this.geometry.matrix.identity();
+    this.geometry.matrixWorldNeedsUpdate = true;
+    this.geometryBase = null;
     if (!abg || !abg.indices) return;
-    const names = abg.header.part_names || ["part"];
-    const tri = abg.indices;
-    const nTri = tri.length / 3;
-    // split triangles by part so parts can be hidden / highlighted individually
-    const byPart: number[][] = names.map(() => []);
-    for (let t = 0; t < nTri; t++) byPart[abg.partIds ? abg.partIds[t] : 0].push(t);
+    const names = abg.header.part_names?.length ? abg.header.part_names : ["part"];
+    const src = abg.indices;
+    const nTri = src.length / 3;
+    const pids = abg.partIds;
+    const nParts = names.length;
+    const counts = new Uint32Array(nParts);
+    for (let t = 0; t < nTri; t++) counts[pids ? Math.min(pids[t], nParts - 1) : 0]++;
+    const starts = new Uint32Array(nParts);
+    let acc = 0;
+    for (let p = 0; p < nParts; p++) {
+      starts[p] = acc;
+      acc += counts[p];
+    }
+    const cursor = starts.slice();
+    const sorted = new Uint32Array(src.length);
+    for (let t = 0; t < nTri; t++) {
+      const p = pids ? Math.min(pids[t], nParts - 1) : 0;
+      const d = 3 * cursor[p]++;
+      sorted[d] = src[3 * t];
+      sorted[d + 1] = src[3 * t + 1];
+      sorted[d + 2] = src[3 * t + 2];
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(abg.positions, 3));
+    g.setIndex(new THREE.BufferAttribute(sorted, 1));
+    const materials: THREE.MeshStandardMaterial[] = [];
     names.forEach((name, pi) => {
-      const tris = byPart[pi];
-      if (!tris.length) return;
-      const pos = new Float32Array(tris.length * 9);
-      let k = 0;
-      for (const t of tris) {
-        for (let v = 0; v < 3; v++) {
-          const idx = tri[3 * t + v] * 3;
-          pos[k++] = abg.positions[idx];
-          pos[k++] = abg.positions[idx + 1];
-          pos[k++] = abg.positions[idx + 2];
-        }
-      }
-      const g = new THREE.BufferGeometry();
-      g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-      g.computeVertexNormals();
-      const color = opts.colorByPart === false ? 0xb8c0cc : name.startsWith("wheel") ? 0x3b3f46 : PART_COLORS[pi % PART_COLORS.length];
+      const color = opts.colorByPart === false ? 0xaab2bd : name.startsWith("wheel") ? WHEEL_COLOR : PART_COLORS[pi % PART_COLORS.length];
       const m = new THREE.MeshStandardMaterial({
         color,
-        metalness: 0.15,
-        roughness: 0.55,
+        metalness: 0.1,
+        roughness: 0.62,
         transparent: (opts.opacity ?? 1) < 1,
         opacity: opts.opacity ?? 1,
         side: THREE.DoubleSide,
-        flatShading: false,
+        flatShading: true,
       });
-      const mesh = new THREE.Mesh(g, m);
-      mesh.name = name;
-      mesh.visible = !(opts.hidden || []).includes(name);
-      this.geometry.add(mesh);
-      this.partMeshes.push({ name, mesh });
+      m.visible = !(opts.hidden || []).includes(name);
+      materials.push(m);
+      if (counts[pi]) g.addGroup(3 * starts[pi], 3 * counts[pi], pi);
+      this.parts.push({ name, material: m });
     });
+    g.computeBoundingBox();
+    g.computeBoundingSphere();
+    const mesh = new THREE.Mesh(g, materials);
+    mesh.name = "vehicle";
+    this.geometry.add(mesh);
+    this.geometryBase = g.boundingBox!.clone();
+    if (this.section) this.applySection();
     this.dirty = true;
   }
 
@@ -234,8 +283,7 @@ export class Viewer {
   }
 
   setGeometryOpacity(o: number): void {
-    for (const { mesh } of this.partMeshes) {
-      const m = mesh.material as THREE.MeshStandardMaterial;
+    for (const { material: m } of this.parts) {
       m.opacity = o;
       m.transparent = o < 1;
       m.depthWrite = o >= 1;
@@ -243,11 +291,33 @@ export class Viewer {
     this.dirty = true;
   }
 
+  setPartVisible(name: string, v: boolean): void {
+    for (const p of this.parts) if (p.name === name) p.material.visible = v;
+    this.dirty = true;
+  }
+
   highlightPart(name: string | null): void {
-    for (const { name: n, mesh } of this.partMeshes) {
-      const m = mesh.material as THREE.MeshStandardMaterial;
-      m.emissive = new THREE.Color(n === name ? 0x335577 : 0x000000);
+    for (const { name: n, material: m } of this.parts) m.emissive = new THREE.Color(n === name ? 0x2c4a66 : 0x000000);
+    this.dirty = true;
+  }
+
+  /**
+   * Show the vehicle re-oriented/re-scaled at once, before the engine has recomputed the
+   * posed geometry: ``linear`` maps the displayed (old) CFD frame to the new one; the result
+   * is moved so its nose, centreline and lowest point stay where they were (the engine's
+   * automatic placement does the same). ``null`` removes the preview transform.
+   */
+  previewGeometryTransform(linear: THREE.Matrix3 | null): void {
+    const base = this.geometryBase;
+    if (!linear || !base) {
+      this.geometry.matrix.identity();
+    } else {
+      const m4 = new THREE.Matrix4().setFromMatrix3(linear);
+      const box = base.clone().applyMatrix4(m4);
+      const t = new THREE.Vector3(base.min.x - box.min.x, 0.5 * (base.min.y + base.max.y) - 0.5 * (box.min.y + box.max.y), base.min.z - box.min.z);
+      this.geometry.matrix.copy(new THREE.Matrix4().makeTranslation(t.x, t.y, t.z).multiply(m4));
     }
+    this.geometry.matrixWorldNeedsUpdate = true;
     this.dirty = true;
   }
 
@@ -256,7 +326,7 @@ export class Viewer {
     this.clearGroup(this.overlays);
   }
 
-  addBox(min: number[], max: number[], color = 0x4dabf7, opacity = 0.08, edges = true, name = "box"): void {
+  addBox(min: number[], max: number[], color = 0x8db7e0, opacity = 0.08, edges = true, name = "box"): void {
     const size = new THREE.Vector3(max[0] - min[0], max[1] - min[1], max[2] - min[2]);
     const g = new THREE.BoxGeometry(size.x, size.y, size.z);
     const centre = new THREE.Vector3((max[0] + min[0]) / 2, (max[1] + min[1]) / 2, (max[2] + min[2]) / 2);
@@ -274,7 +344,7 @@ export class Viewer {
     this.dirty = true;
   }
 
-  addRotatedBox(origin: number[], span: number[], e1: number[], e3: number[], color = 0x4dabf7, opacity = 0.08): void {
+  addRotatedBox(origin: number[], span: number[], e1: number[], e3: number[], color = 0x8db7e0, opacity = 0.08): void {
     const x = new THREE.Vector3(...(e1 as [number, number, number])).normalize();
     const z = new THREE.Vector3(...(e3 as [number, number, number])).normalize();
     const y = new THREE.Vector3().crossVectors(z, x);
@@ -290,7 +360,7 @@ export class Viewer {
     this.dirty = true;
   }
 
-  addCylinder(p1: number[], p2: number[], radius: number, color = 0xf59f00, opacity = 0.1): void {
+  addCylinder(p1: number[], p2: number[], radius: number, color = 0x8db7e0, opacity = 0.1): void {
     const a = new THREE.Vector3(...(p1 as [number, number, number]));
     const b = new THREE.Vector3(...(p2 as [number, number, number]));
     const len = a.distanceTo(b);
@@ -310,35 +380,36 @@ export class Viewer {
     const sx = max[0] - min[0];
     const sy = max[1] - min[1];
     const g = new THREE.PlaneGeometry(sx, sy);
-    const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0x2b313b, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false }));
+    const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0x1c2027, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false }));
     m.position.set((max[0] + min[0]) / 2, (max[1] + min[1]) / 2, z - 1e-4);
     this.overlays.add(m);
     const step = Math.pow(10, Math.floor(Math.log10(Math.max(sx, sy) / 10)));
-    const grid = new THREE.GridHelper(Math.ceil(Math.max(sx, sy) / step) * step, Math.ceil(Math.max(sx, sy) / step), 0x3a4250, 0x262c35);
+    const grid = new THREE.GridHelper(Math.ceil(Math.max(sx, sy) / step) * step, Math.ceil(Math.max(sx, sy) / step), 0x2c323b, 0x23282f);
     grid.rotation.x = Math.PI / 2;
     grid.position.set((max[0] + min[0]) / 2, (max[1] + min[1]) / 2, z);
     (grid.material as THREE.Material).transparent = true;
-    (grid.material as THREE.Material).opacity = 0.5;
+    (grid.material as THREE.Material).opacity = 0.6;
     this.overlays.add(grid);
     this.dirty = true;
   }
 
-  addPoint(p: number[], color = 0xff922b, size = 0.05): void {
+  addPoint(p: number[], color = 0xd6a24a, size = 0.05): void {
     const m = new THREE.Mesh(new THREE.SphereGeometry(size, 16, 12), new THREE.MeshBasicMaterial({ color }));
     m.position.set(p[0], p[1], p[2]);
     this.overlays.add(m);
     this.dirty = true;
   }
 
-  addArrow(origin: number[], dir: number[], length: number, color = 0x4dabf7): void {
+  addArrow(origin: number[], dir: number[], length: number, color = 0x8db7e0): void {
     const d = new THREE.Vector3(...(dir as [number, number, number])).normalize();
     const a = new THREE.ArrowHelper(d, new THREE.Vector3(...(origin as [number, number, number])), length, color, length * 0.18, length * 0.09);
     this.overlays.add(a);
     this.dirty = true;
   }
 
-  addLabel(text: string, p: number[], color = 0xffffff, scale = 0.4): void {
+  addLabel(text: string, p: number[], color = 0xffffff, scale = 0.4, depthTest = false): void {
     const s = this.textSprite(text, color, 40);
+    (s.material as THREE.SpriteMaterial).depthTest = depthTest;
     s.position.set(p[0], p[1], p[2]);
     s.scale.set(scale, scale, 1);
     this.overlays.add(s);
@@ -436,10 +507,140 @@ export class Viewer {
     return [...this.resultMap.keys()];
   }
 
+  // ------------------------------------------------------------------ generated-mesh layers
+  /**
+   * A view of the generated mesh: polygons (fill) plus every cell edge (wireframe), sharing
+   * one position buffer. Slices are coloured per cell by refinement level with the same
+   * colours as the refinement boxes, so the two can be compared directly.
+   */
+  setMeshLayer(id: string, abg: Abg, style: MeshLayerStyle): void {
+    this.removeMeshLayer(id);
+    const grp = new THREE.Group();
+    grp.name = id;
+    const pos = new THREE.BufferAttribute(abg.positions, 3);
+    let fill: THREE.Mesh | null = null;
+    if (abg.indices && abg.indices.length) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", pos);
+      g.setIndex(new THREE.BufferAttribute(abg.indices, 1));
+      const byLevel = style.colorBy === "level" && abg.scalars;
+      if (byLevel) {
+        const n = abg.header.n_points;
+        const col = new Float32Array(3 * n);
+        const c = new THREE.Color();
+        const s = abg.scalars!;
+        for (let i = 0; i < n; i++) {
+          const lv = Number.isFinite(s[i]) ? Math.max(0, Math.min(LEVEL_COLORS.length - 1, Math.round(s[i]))) : 0;
+          c.setHex(LEVEL_COLORS[lv]);
+          col[3 * i] = c.r;
+          col[3 * i + 1] = c.g;
+          col[3 * i + 2] = c.b;
+        }
+        g.setAttribute("color", new THREE.BufferAttribute(col, 3));
+      }
+      const common = { side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 };
+      const mat = byLevel
+        ? new THREE.MeshBasicMaterial({ vertexColors: true, ...common })
+        : new THREE.MeshStandardMaterial({ color: style.color ?? 0x9aa3ae, metalness: 0.05, roughness: 0.7, flatShading: true, ...common });
+      fill = new THREE.Mesh(g, mat);
+      grp.add(fill);
+    }
+    let edges: THREE.LineSegments | null = null;
+    if (abg.edges && abg.edges.length) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", pos);
+      g.setIndex(new THREE.BufferAttribute(abg.edges, 1));
+      edges = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0x0b0d10, transparent: true, opacity: 0.6 }));
+      grp.add(edges);
+    }
+    this.meshGroup.add(grp);
+    this.meshLayers.set(id, { group: grp, fill, edges, style });
+    this.styleMeshLayer(id, style);
+    if (this.section) this.applySection();
+  }
+
+  styleMeshLayer(id: string, style: Partial<MeshLayerStyle>): void {
+    const e = this.meshLayers.get(id);
+    if (!e) return;
+    e.style = { ...e.style, ...style };
+    const st = e.style;
+    e.group.visible = st.visible !== false;
+    const wire = st.mode === "wireframe";
+    if (e.fill) e.fill.visible = !wire;
+    if (e.edges) {
+      e.edges.visible = st.mode !== "surface";
+      const m = e.edges.material as THREE.LineBasicMaterial;
+      // light lines when they are all there is, dark lines over a lit surface
+      m.color.setHex(wire ? (st.wireColor ?? 0xb7c0cb) : 0x0b0d10);
+      m.opacity = wire ? 0.75 : st.colorBy === "level" ? 0.45 : 0.6;
+      m.needsUpdate = true;
+    }
+    this.dirty = true;
+  }
+
+  removeMeshLayer(id: string): void {
+    const e = this.meshLayers.get(id);
+    if (!e) return;
+    this.meshGroup.remove(e.group);
+    e.group.traverse((o: any) => {
+      o.geometry?.dispose?.();
+      o.material?.dispose?.();
+    });
+    this.meshLayers.delete(id);
+    this.dirty = true;
+  }
+
+  clearMeshLayers(): void {
+    for (const id of [...this.meshLayers.keys()]) this.removeMeshLayer(id);
+  }
+
+  hasMeshLayer(id: string): boolean {
+    return this.meshLayers.has(id);
+  }
+
+  /**
+   * Cut the vehicle surfaces (and mesh layers marked ``clip``) along a plane, removing the
+   * half facing the camera, so a mesh cut through the volume can be seen around the body.
+   */
+  setSectionClip(normal: number[] | null, point?: number[]): void {
+    if (!normal || !point) {
+      this.section = null;
+      this.renderer.localClippingEnabled = false;
+    } else {
+      this.section = new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(...(normal as [number, number, number])).normalize(), new THREE.Vector3(...(point as [number, number, number])));
+      this.renderer.localClippingEnabled = true;
+    }
+    this.applySection();
+  }
+
+  private applySection(): void {
+    const planes = this.section ? [this.section] : [];
+    for (const { material } of this.parts) {
+      material.clippingPlanes = planes;
+      material.needsUpdate = true;
+    }
+    for (const e of this.meshLayers.values()) {
+      const clip = e.style.clip ? planes : [];
+      for (const o of [e.fill, e.edges]) {
+        if (!o) continue;
+        const m = o.material as THREE.Material;
+        m.clippingPlanes = clip;
+        m.needsUpdate = true;
+      }
+    }
+    this.dirty = true;
+  }
+
+  setOverlaysVisible(v: boolean): void {
+    this.overlays.visible = v;
+    this.dirty = true;
+  }
+
   // ------------------------------------------------------------------ camera
   bounds(): THREE.Box3 {
     const b = new THREE.Box3();
     b.expandByObject(this.geometry);
+    if (b.isEmpty()) b.expandByObject(this.meshGroup);
     if (b.isEmpty()) b.expandByObject(this.results);
     if (b.isEmpty()) b.expandByObject(this.overlays);
     if (b.isEmpty()) b.set(new THREE.Vector3(-1, -1, 0), new THREE.Vector3(1, 1, 1));

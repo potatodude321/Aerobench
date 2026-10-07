@@ -3,6 +3,14 @@
 ; elevated (per-machine install), so Microsoft MPI is installed without another prompt.
 
 !macro customInstall
+  ; --- 0. Precompile Python modules (the folder is read-only for users afterwards, so
+  ;        without this every start would recompile them in memory: slow start-up) ---------
+  DetailPrint "Optimising the engine and ParaView Python modules (about a minute)..."
+  nsExec::ExecToLog '"$INSTDIR\resources\python\python.exe" -I -m compileall -q -j 0 "$INSTDIR\resources\python\Lib\site-packages"'
+  Pop $0
+  nsExec::ExecToLog '"$INSTDIR\resources\python\python.exe" -I -m compileall -q -j 0 "$INSTDIR\resources\ParaView-6.2.0\bin\Lib"'
+  Pop $0
+
   ; --- 1. ParaView: recreate the duplicate DLLs removed from the package as hard links ----
   DetailPrint "Completing the ParaView installation..."
   nsExec::ExecToLog '"$INSTDIR\resources\python\python.exe" -I "$INSTDIR\resources\tools\restore_links.py" "$INSTDIR\resources"'

@@ -74,4 +74,18 @@ export function colormapCss(name: string, steps = 16): string {
   return `linear-gradient(90deg, ${parts.join(", ")})`;
 }
 
-export const PART_COLORS = [0x9aa5b1, 0x4dabf7, 0xf59f00, 0x51cf66, 0xff6b6b, 0xcc5de8, 0x22b8cf, 0xfcc419, 0x845ef7, 0x20c997];
+/** Vehicle parts: muted, mutually distinguishable tones on the dark viewport (body first). */
+export const PART_COLORS = [0x9aa3ae, 0x7fa7c9, 0xc4a46b, 0x86b08f, 0xb98a8a, 0x9d90c0, 0x6fb0ae, 0xc9b67c, 0x8f9fb8, 0xa7b58a];
+export const WHEEL_COLOR = 0x3c4149;
+
+/**
+ * Refinement level 0 (background cell) … 11: an ordered ramp from cool and dark to warm and
+ * light, so a finer level always reads as "more". Shared by refinement boxes, the mesh cut
+ * plane and their legends.
+ */
+export const LEVEL_COLORS = [0x3d4653, 0x445f78, 0x4e7c9c, 0x5d99b5, 0x74b2bd, 0x92c5b3, 0xb3d29e, 0xd5d58b, 0xe6c07b, 0xe8a46f, 0xe28867, 0xd86f68];
+
+export function levelColorCss(level: number): string {
+  const c = LEVEL_COLORS[Math.max(0, Math.min(LEVEL_COLORS.length - 1, Math.round(level)))];
+  return "#" + c.toString(16).padStart(6, "0");
+}

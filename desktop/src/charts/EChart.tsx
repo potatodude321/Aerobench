@@ -1,16 +1,16 @@
 import * as echarts from "echarts";
 import { useEffect, useRef } from "react";
 
-export const CHART_COLORS = ["#4dabf7", "#ff922b", "#51cf66", "#f06595", "#cc5de8", "#fcc419", "#22b8cf", "#94d82d", "#ff6b6b", "#845ef7"];
+export const CHART_COLORS = ["#8db7e0", "#d6a24a", "#74b98f", "#c98bb0", "#a99ad6", "#d9c27a", "#6fb0ae", "#e08a7a", "#9aa3ae", "#b5c77d"];
 
 const base: echarts.EChartsOption = {
   backgroundColor: "transparent",
-  textStyle: { color: "#c1c7d0", fontFamily: "Inter, system-ui, sans-serif" },
+  textStyle: { color: "#a1a9b4", fontFamily: "Barlow, 'Segoe UI', system-ui, sans-serif", fontSize: 12 },
   color: CHART_COLORS,
   animation: false,
   grid: { left: 60, right: 20, top: 52, bottom: 40, containLabel: false },
-  tooltip: { trigger: "axis", backgroundColor: "rgba(20,23,29,0.95)", borderColor: "#333a45", textStyle: { color: "#e9ecef" } },
-  legend: { textStyle: { color: "#c1c7d0" }, top: 0, type: "scroll" },
+  tooltip: { trigger: "axis", backgroundColor: "rgba(27,31,37,0.96)", borderColor: "#2d333c", textStyle: { color: "#e3e6ea", fontFamily: "Barlow, sans-serif" } },
+  legend: { textStyle: { color: "#a1a9b4" }, top: 0, type: "scroll", icon: "roundRect", itemWidth: 12, itemHeight: 3 },
 };
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
@@ -59,8 +59,8 @@ export function EChart({ option, height = 260, onClick }: { option: echarts.ECha
 }
 
 export const axisStyle = {
-  axisLine: { lineStyle: { color: "#4a5260" } },
-  splitLine: { lineStyle: { color: "#262c35" } },
-  axisLabel: { color: "#9aa3ad" },
-  nameTextStyle: { color: "#9aa3ad" },
+  axisLine: { lineStyle: { color: "#39404a" } },
+  splitLine: { lineStyle: { color: "#242930" } },
+  axisLabel: { color: "#8b939e" },
+  nameTextStyle: { color: "#6c7580" },
 };

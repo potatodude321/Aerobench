@@ -99,7 +99,7 @@ export function ReportPage() {
       <Table className="compact" highlightOnHover>
         <Table.Tbody>
           {reports.map((r) => (
-            <Table.Tr key={r.id} onClick={() => setSel(r.id)} style={{ cursor: "pointer", background: sel === r.id ? "rgba(34,184,207,0.08)" : undefined }}>
+            <Table.Tr key={r.id} onClick={() => setSel(r.id)} style={{ cursor: "pointer", background: sel === r.id ? "var(--ab-accent-dim)" : undefined }}>
               <Table.Td>
                 <Text size="xs" fw={600}>{r.title}</Text>
                 <Text size="xs" c="dimmed">{r.created_at.replace("T", " ").slice(0, 16)}</Text>
@@ -113,7 +113,7 @@ export function ReportPage() {
   );
 
   return (
-    <PageLayout side={side} sideWidth={400}>
+    <PageLayout side={side} sideWidth={400} pad>
       {current ? (
         <Stack gap={6} p="sm" h="100%">
           <Group justify="space-between">

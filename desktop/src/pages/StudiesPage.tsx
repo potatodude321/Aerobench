@@ -190,7 +190,7 @@ function StudiesWorkspace() {
   );
 
   return (
-    <PageLayout side={side} sideWidth={440}>
+    <PageLayout side={side} sideWidth={440} pad>
       {d ? (
         <Stack gap="sm" p="sm" h="100%">
           <StudyHeader d={d} reload={reload} />
@@ -230,7 +230,7 @@ function StudyChart({ d }: { d: any }) {
       xAxis: { type: "value", name: xv, nameLocation: "middle", nameGap: 24, scale: true, ...axisStyle },
       yAxis: { type: "value", name: m, scale: true, ...axisStyle },
       series: [
-        { type: oneFactor ? "line" : "scatter", data: onAxis, symbolSize: 8, itemStyle: { color: "#22b8cf" } },
+        { type: oneFactor ? "line" : "scatter", data: onAxis, symbolSize: 8, itemStyle: { color: "#8db7e0" } },
         ...(oneFactor ? [] : []),
       ],
     };

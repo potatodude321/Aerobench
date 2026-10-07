@@ -1,25 +1,21 @@
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import { AppShell, Badge, Box, Center, Group, Loader, NavLink, Stack, Switch, Text, Tooltip } from "@mantine/core";
+import { Center, Loader, Stack, Switch, Text, Tooltip } from "@mantine/core";
 import {
   IconArrowsDiff,
-  IconAtom2,
-  IconCar,
-  IconChartAreaLine,
   IconCode,
   IconFileAnalytics,
   IconFolder,
-  IconGridDots,
-  IconPlayerPlay,
   IconSettings,
   IconTable,
   IconTargetArrow,
   IconTerminal2,
-  IconWind,
 } from "@tabler/icons-react";
 import { useEffect } from "react";
 import { api, events, initEngine } from "./api/client";
 import { bridge } from "./api/bridge";
+import type { ProjectPayload } from "./api/types";
 import { notifyError } from "./components/notify";
+import { StatusDot } from "./components/ui";
 import { Section, useApp } from "./state/store";
 import { ComparePage } from "./pages/ComparePage";
 import { ExpertPage } from "./pages/ExpertPage";
@@ -37,19 +33,22 @@ import { StudiesPage } from "./pages/StudiesPage";
 import { TunnelPage } from "./pages/TunnelPage";
 import { Welcome } from "./pages/Welcome";
 
-const PRIMARY: { id: Section; label: string; icon: any }[] = [
-  { id: "geometry", label: "Geometry", icon: IconCar },
-  { id: "tunnel", label: "Tunnel", icon: IconWind },
-  { id: "mesh", label: "Mesh", icon: IconGridDots },
-  { id: "physics", label: "Physics", icon: IconAtom2 },
-  { id: "run", label: "Run", icon: IconPlayerPlay },
-  { id: "results", label: "Results", icon: IconChartAreaLine },
+/** The simulation workflow, in the order it is done. */
+const WORKFLOW: { id: Section; label: string }[] = [
+  { id: "geometry", label: "Geometry" },
+  { id: "tunnel", label: "Tunnel" },
+  { id: "mesh", label: "Mesh" },
+  { id: "physics", label: "Physics" },
+  { id: "run", label: "Run" },
+  { id: "results", label: "Results" },
+];
+const ANALYSIS: { id: Section; label: string; icon: any }[] = [
   { id: "compare", label: "Compare", icon: IconArrowsDiff },
   { id: "studies", label: "Studies", icon: IconTable },
   { id: "optimise", label: "Optimise", icon: IconTargetArrow },
   { id: "report", label: "Report", icon: IconFileAnalytics },
 ];
-const SECONDARY: { id: Section; label: string; icon: any }[] = [
+const PROJECT: { id: Section; label: string; icon: any }[] = [
   { id: "project", label: "Project", icon: IconFolder },
   { id: "logs", label: "Logs", icon: IconTerminal2 },
   { id: "expert", label: "Expert", icon: IconCode },
@@ -89,8 +88,37 @@ function SectionContent({ section }: { section: Section }) {
   }
 }
 
+type StepState = "done" | "stale" | "running" | "issue" | "todo";
+
+/** Where each workflow stage stands, for the markers in the rail. */
+function stepStates(project: ProjectPayload, activeJobs: any[], hasResults: boolean): Record<string, { state: StepState; note?: string; tip: string }> {
+  const st = project.staleness;
+  const hasGeo = !!project.config.geometry.revision_id;
+  const errs = (re: RegExp) => project.validation.filter((v) => v.severity === "error" && re.test(v.path)).length;
+  const meshJobs = activeJobs.filter((j) => j.kind === "mesh").length;
+  const runJobs = activeJobs.filter((j) => j.kind !== "mesh").length;
+  const out: Record<string, { state: StepState; note?: string; tip: string }> = {};
+  out.geometry = hasGeo ? { state: "done", tip: "Vehicle imported" } : { state: "todo", note: "Start here", tip: "Import the vehicle surface" };
+  const t = errs(/^tunnel/);
+  out.tunnel = !hasGeo ? { state: "todo", tip: "Set up after importing the vehicle" } : t ? { state: "issue", note: `${t} issue${t > 1 ? "s" : ""}`, tip: "Setup issues" } : { state: "done", tip: "Domain set" };
+  if (meshJobs) out.mesh = { state: "running", note: "Meshing", tip: "Meshing in progress" };
+  else if (st.mesh.current) out.mesh = { state: "done", tip: "The mesh matches the current setup" };
+  else if (st.mesh.stale) out.mesh = { state: "stale", note: "Out of date", tip: "The setup changed since the last mesh; a new mesh is generated with the next run" };
+  else out.mesh = { state: "todo", tip: "Not meshed yet (a run meshes automatically)" };
+  const ph = errs(/^(physics|operating|numerics)/);
+  out.physics = !hasGeo ? { state: "todo", tip: "Set up after importing the vehicle" } : ph ? { state: "issue", note: `${ph} issue${ph > 1 ? "s" : ""}`, tip: "Setup issues" } : { state: "done", tip: "Physics set" };
+  if (runJobs) out.run = { state: "running", note: `${runJobs} running`, tip: "Simulations in progress" };
+  else if (st.solve.current) out.run = { state: "done", tip: "A run matches the current setup" };
+  else if (st.solve.stale) out.run = { state: "stale", note: "Setup changed", tip: "The setup changed since the last run" };
+  else out.run = { state: "todo", tip: "No run yet" };
+  if (!hasResults) out.results = { state: "todo", tip: "No results yet" };
+  else if (st.solve.stale) out.results = { state: "stale", note: "Older setup", tip: "The results are from an earlier setup" };
+  else out.results = { state: "done", tip: "Results available" };
+  return out;
+}
+
 export default function App() {
-  const { engineReady, engineError, project, section, setSection, expertMode, setExpert, setEngineReady, setEnvironment, setJobs, jobs } = useApp();
+  const { engineReady, engineError, project, section, setSection, expertMode, setExpert, setEngineReady, setEnvironment, setJobs, jobs, runs } = useApp();
 
   useEffect(() => {
     let cancelled = false;
@@ -131,20 +159,20 @@ export default function App() {
   if (!engineReady) {
     return (
       <Center h="100%">
-        <Stack align="center">
+        <Stack align="center" gap={8} maw={720} p="xl">
           {engineError ? (
             <>
-              <Text c="red" fw={600}>
+              <div className="ab-page-title" style={{ color: "var(--ab-err)" }}>
                 The engine is not reachable
-              </Text>
-              <Text size="xs" c="dimmed" maw={700} style={{ whiteSpace: "pre-wrap" }}>
+              </div>
+              <Text size="xs" c="dimmed" style={{ whiteSpace: "pre-wrap" }}>
                 {engineError}
               </Text>
             </>
           ) : (
             <>
-              <Loader />
-              <Text c="dimmed">Starting engine…</Text>
+              <Loader size="sm" color="ice" />
+              <Text c="dimmed">Opening the workspace…</Text>
             </>
           )}
         </Stack>
@@ -154,83 +182,79 @@ export default function App() {
 
   if (!project) return <Welcome />;
 
-  const st = project.staleness;
   const running = jobs.active.length;
-  const badge = (id: Section) => {
-    if (id === "geometry" && !project.config.geometry.revision_id) return <Badge size="xs" color="yellow">import</Badge>;
-    if (id === "mesh" && st.mesh.stale) return <Badge size="xs" color="orange">stale</Badge>;
-    if (id === "run" && running) return <Badge size="xs" color="cyan">{running}</Badge>;
-    if (id === "results" && st.solve.stale) return <Badge size="xs" color="orange">stale</Badge>;
-    return null;
-  };
-  const errors = project.validation.filter((v) => v.severity === "error").length;
+  const hasResults = runs.some((r) => ["completed", "stopped", "interrupted"].includes(r.status) && r.metrics);
+  const states = stepStates(project, jobs.active, hasResults);
+  const errors = project.validation.filter((v) => v.severity === "error");
 
   return (
-    <AppShell header={{ height: 46 }} navbar={{ width: 190, breakpoint: 0 }} padding={0}>
-      <AppShell.Header style={{ background: "#111419", borderColor: "#232831" }}>
-        <Group h="100%" px="md" justify="space-between">
-          <Group gap="sm">
-            <Text fw={800} c="cyan.4" style={{ letterSpacing: 0.5 }}>
-              AeroBench
-            </Text>
-            <Text c="dimmed" size="sm">
-              /
-            </Text>
-            <Text fw={600} size="sm">
-              {project.config.name}
-            </Text>
-            <Text c="dimmed" size="xs" className="mono">
-              {project.root}
-            </Text>
-          </Group>
-          <Group gap="md">
-            {errors > 0 && (
-              <Tooltip label={project.validation.filter((v) => v.severity === "error").map((v) => v.message).join("\n")} multiline w={360}>
-                <Badge color="red" variant="light">
-                  {errors} setup issue{errors > 1 ? "s" : ""}
-                </Badge>
+    <div className="ab-shell">
+      <header className="ab-header">
+        <div style={{ display: "flex", alignItems: "baseline", minWidth: 0 }}>
+          <span className="ab-wordmark">AeroBench</span>
+          <span className="ab-crumb">/</span>
+          <Tooltip label={project.root}>
+            <span style={{ fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{project.config.name}</span>
+          </Tooltip>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+          {errors.length > 0 && (
+            <Tooltip label={errors.map((v) => v.message).join("\n")} w={380}>
+              <span>
+                <StatusDot tone="err" label={`${errors.length} setup issue${errors.length > 1 ? "s" : ""}`} />
+              </span>
+            </Tooltip>
+          )}
+          <StatusDot tone={running ? "live" : "idle"} label={running ? `${running} job${running > 1 ? "s" : ""} running` : "Idle"} />
+          <Switch size="xs" label="Expert" checked={expertMode} onChange={(e) => setExpert(e.currentTarget.checked)} />
+        </div>
+      </header>
+      <nav className="ab-rail" aria-label="Sections">
+        <div className="ab-rail-group">Workflow</div>
+        <div className="ab-seq">
+          {WORKFLOW.map((s, i) => {
+            const st = states[s.id];
+            return (
+              <Tooltip key={s.id} label={st.tip} position="right" openDelay={500} disabled={!st.note}>
+                <button className="ab-step" data-state={st.state} aria-current={section === s.id ? "page" : undefined} onClick={() => setSection(s.id)}>
+                  <span className="ab-step-no">{i + 1}</span>
+                  <span>{s.label}</span>
+                  <span className="ab-step-note" style={st.state === "issue" ? { color: "var(--ab-err)" } : undefined}>
+                    {st.note}
+                  </span>
+                </button>
               </Tooltip>
-            )}
-            <Badge variant="dot" color={running ? "cyan" : "gray"}>
-              {running ? `${running} job${running > 1 ? "s" : ""} running` : "idle"}
-            </Badge>
-            <Switch size="xs" label="Expert" checked={expertMode} onChange={(e) => setExpert(e.currentTarget.checked)} />
-          </Group>
-        </Group>
-      </AppShell.Header>
-      <AppShell.Navbar p={6} style={{ background: "#111419", borderColor: "#232831" }}>
-        <Stack gap={2} h="100%">
-          {PRIMARY.map((s) => (
-            <NavLink
-              key={s.id}
-              active={section === s.id}
-              label={s.label}
-              leftSection={<s.icon size={18} stroke={1.6} />}
-              rightSection={badge(s.id)}
-              onClick={() => setSection(s.id)}
-              variant="light"
-              style={{ borderRadius: 6 }}
-            />
+            );
+          })}
+        </div>
+        <div className="ab-rail-group" style={{ marginTop: 22 }}>
+          Analysis
+        </div>
+        <div className="ab-plain">
+          {ANALYSIS.map((s) => (
+            <button key={s.id} className="ab-step" aria-current={section === s.id ? "page" : undefined} onClick={() => setSection(s.id)}>
+              <s.icon size={16} stroke={1.6} />
+              <span>{s.label}</span>
+              <span />
+            </button>
           ))}
-          <Box style={{ flex: 1 }} />
-          {SECONDARY.filter((s) => s.id !== "expert" || expertMode).map((s) => (
-            <NavLink
-              key={s.id}
-              active={section === s.id}
-              label={s.label}
-              leftSection={<s.icon size={17} stroke={1.6} />}
-              onClick={() => setSection(s.id)}
-              variant="light"
-              style={{ borderRadius: 6 }}
-            />
+        </div>
+        <div style={{ flex: 1 }} />
+        <div className="ab-plain">
+          {PROJECT.filter((s) => s.id !== "expert" || expertMode).map((s) => (
+            <button key={s.id} className="ab-step" aria-current={section === s.id ? "page" : undefined} onClick={() => setSection(s.id)}>
+              <s.icon size={16} stroke={1.6} />
+              <span>{s.label}</span>
+              <span />
+            </button>
           ))}
-        </Stack>
-      </AppShell.Navbar>
-      <AppShell.Main style={{ height: "100vh", paddingTop: 46, background: "#0c0e12" }}>
+        </div>
+      </nav>
+      <main className="ab-main">
         <ErrorBoundary resetKey={section}>
           <SectionContent section={section} />
         </ErrorBoundary>
-      </AppShell.Main>
-    </AppShell>
+      </main>
+    </div>
   );
 }

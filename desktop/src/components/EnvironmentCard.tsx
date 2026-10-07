@@ -1,12 +1,13 @@
-import { Alert, Anchor, Badge, Button, Card, Group, Stack, Text } from "@mantine/core";
+import { Anchor, Button, Group, Stack } from "@mantine/core";
 import { IconRefresh } from "@tabler/icons-react";
 import { useState } from "react";
 import { api } from "../api/client";
 import { bridge } from "../api/bridge";
 import { useApp } from "../state/store";
 import { notifyError, notifyOk } from "./notify";
-import { DiagnosticList } from "./ui";
+import { DiagnosticList, Hint, StatusDot } from "./ui";
 
+/** What this computer can run: solver, MPI, ParaView, CAD import — as plain status lines. */
 export function EnvironmentCard() {
   const { environment, setEnvironment } = useApp();
   const [busy, setBusy] = useState(false);
@@ -35,84 +36,58 @@ export function EnvironmentCard() {
       setBusy(false);
     }
   };
-  if (!environment)
-    return (
-      <Card withBorder>
-        <Text size="sm" c="dimmed">
-          Checking environment…
-        </Text>
-      </Card>
-    );
+  if (!environment) return <Hint>Checking what is installed…</Hint>;
   const pv = environment.paraview || {};
   const hw = environment.hardware || {};
+  const cad = environment.cad_import || [];
   return (
-    <Card withBorder radius="md" p="md">
-      <Group justify="space-between" mb="xs">
-        <Text fw={700}>Environment</Text>
-        <Button size="xs" variant="subtle" leftSection={<IconRefresh size={14} />} loading={busy} onClick={refresh}>
-          Re-detect
+    <Stack gap={12}>
+      {(environment.providers || []).map((p: any) => (
+        <div key={p.id}>
+          <StatusDot tone={p.available ? "ok" : "err"} label={<span style={{ color: "var(--ab-text)" }}>{p.label}</span>} />
+          <Hint style={{ marginLeft: 13 }}>
+            {p.available ? `${p.fork} ${p.version}, parallel runs ${p.mpi?.available ? `with ${p.mpi.kind}` : "not available"}` : "Not ready"}
+          </Hint>
+          {(p.problems || []).length > 0 && (
+            <div style={{ marginTop: 6, marginLeft: 13 }}>
+              <DiagnosticList items={p.problems} />
+            </div>
+          )}
+          {bridge?.installMsmpi &&
+            (p.problems || []).some((d: any) => ["environment.msmpi_missing", "environment.msmpi_old"].includes(d.code) && d.context?.bundled_installer) && (
+              <Button size="xs" mt={6} ml={13} loading={mpiBusy} onClick={installMpi}>
+                Install Microsoft MPI
+              </Button>
+            )}
+        </div>
+      ))}
+      <div>
+        <StatusDot tone={pv.available ? (pv.status === "ok" ? "ok" : "warn") : "err"}
+          label={<span style={{ color: "var(--ab-text)" }}>ParaView {pv.version || ""}{pv.bundled ? " (included)" : ""}</span>} />
+        <Hint style={{ marginLeft: 13 }}>
+          {pv.message || (pv.available ? "Flow pictures and images for reports" : "Not found")}
+          {!pv.available && (
+            <>
+              {" "}
+              <Anchor size="xs" href="https://www.paraview.org/download/" target="_blank">
+                paraview.org/download
+              </Anchor>
+            </>
+          )}
+        </Hint>
+      </div>
+      <div>
+        <StatusDot tone={cad.length ? "ok" : "idle"} label={<span style={{ color: "var(--ab-text)" }}>STEP and IGES import</span>} />
+        <Hint style={{ marginLeft: 13 }}>{cad.length ? `Through ${cad.join(", ")}` : "Not installed; STL, OBJ and PLY work"}</Hint>
+      </div>
+      <Group justify="space-between" wrap="nowrap">
+        <Hint>
+          {hw.physical_cores} cores, {hw.logical_cores} threads, {hw.memory_gb} GB memory
+        </Hint>
+        <Button size="compact-xs" variant="subtle" color="gray" leftSection={<IconRefresh size={13} />} loading={busy} onClick={refresh}>
+          Check again
         </Button>
       </Group>
-      <Stack gap="xs">
-        {(environment.providers || []).map((p: any) => (
-          <div key={p.id}>
-            <Group justify="space-between">
-              <Text size="sm" fw={600}>
-                {p.label}
-              </Text>
-              <Badge color={p.available ? "teal" : "red"} variant="light">
-                {p.available ? "ready" : "unavailable"}
-              </Badge>
-            </Group>
-            {p.available && (
-              <Text size="xs" c="dimmed">
-                {p.fork} {p.version} · MPI: {p.mpi?.available ? p.mpi.kind : "none"} · {p.project_dir}
-              </Text>
-            )}
-            <DiagnosticList items={p.problems} />
-            {bridge?.installMsmpi &&
-              (p.problems || []).some((d: any) => ["environment.msmpi_missing", "environment.msmpi_old"].includes(d.code) && d.context?.bundled_installer) && (
-                <Button size="xs" mt={4} loading={mpiBusy} onClick={installMpi}>
-                  Install Microsoft MPI
-                </Button>
-              )}
-          </div>
-        ))}
-        <div>
-          <Group justify="space-between">
-            <Text size="sm" fw={600}>
-              ParaView
-            </Text>
-            <Badge color={pv.available ? (pv.status === "ok" ? "teal" : "yellow") : "red"} variant="light">
-              {pv.version || (pv.available ? "found" : "missing")}
-              {pv.bundled ? " · included" : ""}
-            </Badge>
-          </Group>
-          {pv.message && (
-            <Alert color={pv.available ? "yellow" : "red"} variant="light" p={6} mt={4}>
-              <Text size="xs">
-                {pv.message}{" "}
-                {!pv.available && (
-                  <Anchor size="xs" href="https://www.paraview.org/download/" target="_blank">
-                    paraview.org/download
-                  </Anchor>
-                )}
-              </Text>
-            </Alert>
-          )}
-        </div>
-        <Group justify="space-between">
-          <Text size="sm" fw={600}>
-            CAD import (STEP/IGES)
-          </Text>
-          <Badge color={(environment.cad_import || []).length ? "teal" : "gray"} variant="light">
-            {(environment.cad_import || []).length ? environment.cad_import.join(", ") : "not installed"}
-          </Badge>
-        </Group>
-        <Text size="xs" c="dimmed">
-          {hw.physical_cores} physical cores · {hw.logical_cores} threads · {hw.memory_gb} GB RAM · {hw.os}
-        </Text>
-      </Stack>
-    </Card>
+    </Stack>
   );
 }

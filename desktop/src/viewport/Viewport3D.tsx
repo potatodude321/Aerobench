@@ -1,4 +1,4 @@
-import { ActionIcon, Group, Paper, Tooltip } from "@mantine/core";
+import { ActionIcon, Group, Tooltip } from "@mantine/core";
 import {
   IconArrowBigLeftLines,
   IconArrowBigRightLines,
@@ -60,7 +60,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Props>(function Viewport3
   };
 
   return (
-    <div style={{ position: "relative", width: "100%", height: height ?? "100%", minHeight: 200, overflow: "hidden", borderRadius: 8 }}>
+    <div style={{ position: "relative", width: "100%", height: height ?? "100%", flex: height ? undefined : 1, minHeight: 200, overflow: "hidden", background: "var(--ab-viewport)" }}>
       <div ref={host} style={{ position: "absolute", inset: 0 }} data-testid="viewport" />
       {glError && (
         <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
@@ -73,45 +73,45 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Props>(function Viewport3
         </div>
       )}
       {toolbar && viewer && (
-        <Paper shadow="sm" p={4} radius="md" style={{ position: "absolute", top: 8, right: 8, background: "rgba(20,23,29,0.85)" }}>
-          <Group gap={2}>
-            <Tooltip label="Isometric (front)">
-              <ActionIcon variant="subtle" onClick={() => viewer.view("iso")}>
-                <IconView360 size={18} />
+        <div className="ab-float" style={{ top: 10, right: 10, padding: 3 }}>
+          <Group gap={0}>
+            <Tooltip label="Three-quarter front view">
+              <ActionIcon variant="subtle" color="gray" onClick={() => viewer.view("iso")}>
+                <IconView360 size={17} stroke={1.6} />
               </ActionIcon>
             </Tooltip>
-            <Tooltip label="Isometric (rear)">
-              <ActionIcon variant="subtle" onClick={() => viewer.view("iso_rear")}>
-                <IconLayersSubtract size={18} />
+            <Tooltip label="Three-quarter rear view">
+              <ActionIcon variant="subtle" color="gray" onClick={() => viewer.view("iso_rear")}>
+                <IconLayersSubtract size={17} stroke={1.6} />
               </ActionIcon>
             </Tooltip>
-            <Tooltip label="Front">
-              <ActionIcon variant="subtle" onClick={() => viewer.view("front")}>
-                <IconArrowBigRightLines size={18} />
+            <Tooltip label="From the front">
+              <ActionIcon variant="subtle" color="gray" onClick={() => viewer.view("front")}>
+                <IconArrowBigRightLines size={17} stroke={1.6} />
               </ActionIcon>
             </Tooltip>
-            <Tooltip label="Rear">
-              <ActionIcon variant="subtle" onClick={() => viewer.view("rear")}>
-                <IconArrowBigLeftLines size={18} />
+            <Tooltip label="From behind">
+              <ActionIcon variant="subtle" color="gray" onClick={() => viewer.view("rear")}>
+                <IconArrowBigLeftLines size={17} stroke={1.6} />
               </ActionIcon>
             </Tooltip>
-            <Tooltip label="Side">
-              <ActionIcon variant="subtle" onClick={() => viewer.view("side")}>
-                <IconBox size={18} />
+            <Tooltip label="From the side">
+              <ActionIcon variant="subtle" color="gray" onClick={() => viewer.view("side")}>
+                <IconBox size={17} stroke={1.6} />
               </ActionIcon>
             </Tooltip>
-            <Tooltip label="Top">
-              <ActionIcon variant="subtle" onClick={() => viewer.view("top")}>
-                <IconEye size={18} />
+            <Tooltip label="From above">
+              <ActionIcon variant="subtle" color="gray" onClick={() => viewer.view("top")}>
+                <IconEye size={17} stroke={1.6} />
               </ActionIcon>
             </Tooltip>
-            <Tooltip label="Save image">
-              <ActionIcon variant="subtle" onClick={saveImage}>
-                <IconCamera size={18} />
+            <Tooltip label="Save this view as an image">
+              <ActionIcon variant="subtle" color="gray" onClick={saveImage}>
+                <IconCamera size={17} stroke={1.6} />
               </ActionIcon>
             </Tooltip>
           </Group>
-        </Paper>
+        </div>
       )}
       {children}
     </div>

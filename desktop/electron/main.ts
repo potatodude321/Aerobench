@@ -11,6 +11,7 @@ import { ChildProcess, spawn } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import * as readline from "readline";
+import { splashHtml } from "./splash";
 
 interface EngineInfo {
   url: string;
@@ -22,6 +23,37 @@ let engine: ChildProcess | null = null;
 let engineInfo: EngineInfo | null = null;
 let engineLog: string[] = [];
 let win: BrowserWindow | null = null;
+let splash: BrowserWindow | null = null;
+
+/** Launch window: appears immediately, reports start-up progress, closes when the app shows. */
+function showSplash(): void {
+  splash = new BrowserWindow({
+    width: 560,
+    height: 340,
+    frame: false,
+    resizable: false,
+    movable: true,
+    center: true,
+    show: false,
+    skipTaskbar: false,
+    title: "AeroBench",
+    backgroundColor: "#15181d",
+    webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, javascript: true },
+  });
+  splash.once("ready-to-show", () => splash?.show());
+  splash.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(splashHtml(app.getVersion())));
+  splash.on("closed", () => (splash = null));
+}
+
+function splashStatus(text: string, isError = false): void {
+  if (!splash || splash.isDestroyed()) return;
+  splash.webContents.executeJavaScript(`window.setStatus && window.setStatus(${JSON.stringify(text)}, ${isError})`).catch(() => undefined);
+}
+
+function closeSplash(): void {
+  if (splash && !splash.isDestroyed()) splash.close();
+  splash = null;
+}
 
 const isDev = !!process.env.AEROBENCH_DEV_URL;
 
@@ -106,7 +138,11 @@ async function createWindow(): Promise<void> {
       sandbox: true,
     },
   });
-  win.once("ready-to-show", () => win?.show());
+  win.once("ready-to-show", () => {
+    win?.show();
+    win?.focus();
+    closeSplash();
+  });
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith("http://127.0.0.1") || url.startsWith("https://")) shell.openExternal(url);
     return { action: "deny" };
@@ -178,21 +214,39 @@ function registerIpc(): void {
 // software fallback is allowed. The app only renders its own localhost content.
 app.commandLine.appendSwitch("enable-unsafe-swiftshader");
 
-app.whenReady().then(async () => {
-  Menu.setApplicationMenu(null);
-  registerIpc();
-  try {
-    await startEngine();
-  } catch (err) {
-    dialog.showErrorBox(
-      "AeroBench could not start its engine",
-      `${(err as Error).message}\n\nInstall Python 3.11+ with the engine package, or set AEROBENCH_PYTHON.`,
-    );
-    app.quit();
-    return;
-  }
-  await createWindow();
-});
+// One AeroBench at a time: a second launch (e.g. a double click while the first is still
+// starting) brings the existing window forward instead of starting another engine.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    const w = win && !win.isDestroyed() && win.isVisible() ? win : splash;
+    if (w && !w.isDestroyed()) {
+      if (w.isMinimized()) w.restore();
+      w.focus();
+    }
+  });
+
+  app.whenReady().then(async () => {
+    Menu.setApplicationMenu(null);
+    showSplash();
+    registerIpc();
+    splashStatus("Starting the solver engine…");
+    try {
+      await startEngine();
+    } catch (err) {
+      splashStatus("The engine did not start.", true);
+      dialog.showErrorBox(
+        "AeroBench could not start its engine",
+        `${(err as Error).message}\n\nRun the AeroBench setup again to repair the installation.`,
+      );
+      app.quit();
+      return;
+    }
+    splashStatus("Opening the workspace…");
+    await createWindow();
+  });
+}
 
 app.on("window-all-closed", () => {
   // Solver jobs and the project worker are detached processes and keep running.

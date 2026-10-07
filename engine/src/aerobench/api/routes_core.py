@@ -148,7 +148,19 @@ def recent(e: EngineState = Depends(engine)):
     out = []
     for path in e.ctx.settings.recent_projects:
         pp = Path(path)
-        out.append({"path": path, "exists": (pp / "project.json").exists(), "name": pp.name})
+        pj = pp / "project.json"
+        row = {"path": path, "exists": pj.exists(), "name": pp.name, "modified": None}
+        if row["exists"]:
+            try:
+                import json as _json
+
+                data = _json.loads(pj.read_text(encoding="utf-8"))
+                cfg = data.get("config", data)
+                row["name"] = cfg.get("name") or pp.name
+                row["modified"] = cfg.get("modified_at")
+            except (OSError, ValueError, AttributeError):
+                pass  # unreadable file: still listed by folder name
+        out.append(row)
     return out
 
 

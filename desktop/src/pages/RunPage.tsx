@@ -1,11 +1,11 @@
-import { ActionIcon, Alert, Badge, Button, Group, Menu, NumberInput, Paper, Progress, Select, SimpleGrid, Stack, Table, Tabs, Text, TextInput, Tooltip } from "@mantine/core";
+import { ActionIcon, Button, Group, Menu, NumberInput, Progress, Select, SimpleGrid, Stack, Table, Tabs, Text, TextInput, Tooltip } from "@mantine/core";
 import { IconDots, IconPlayerPlay, IconPlayerStop, IconRefresh, IconRepeat } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
 import { api, events } from "../api/client";
 import { CoefficientChart, ResidualChart } from "../charts/RunCharts";
 import { fmt } from "../components/ColorLegend";
 import { notifyError, notifyOk } from "../components/notify";
-import { DiagnosticList, KeyValue, PageLayout, SectionTitle, StatusBadge, ValidationList } from "../components/ui";
+import { DiagnosticList, EmptyState, Hint, KeyValue, PageLayout, SectionTitle, StatusBadge, StatusDot, ValidationList } from "../components/ui";
 import { pid, useApp } from "../state/store";
 
 function duration(s: number | null | undefined): string {
@@ -48,67 +48,59 @@ export function RunPage() {
   };
 
   const side = (
-    <Stack gap="xs">
-      <SectionTitle>Execution</SectionTitle>
-      <Select size="xs" label="Solver environment" data={providers} value={cfg.execution.provider_id || environment?.default_provider || null}
+    <>
+      <SectionTitle first>Where it runs</SectionTitle>
+      <Select size="xs" label="Solver" data={providers} value={cfg.execution.provider_id || environment?.default_provider || null}
         onChange={(v) => patchConfig({ execution: { provider_id: v } })} />
-      <Group grow>
+      <SimpleGrid cols={2} spacing="xs" mt={8}>
         <NumberInput size="xs" label="Cores" min={1} max={maxCores} value={cfg.execution.n_procs}
           onChange={(v) => typeof v === "number" && patchConfig({ execution: { n_procs: Math.max(1, Math.min(maxCores, v)) } })}
-          description={`${maxCores} available for runs`} />
-        <Select size="xs" label="Write format" data={["binary", "ascii"]} value={cfg.execution.write_format}
+          description={`${maxCores} available`} />
+        <Select size="xs" label="Result files" data={[{ value: "binary", label: "Binary (smaller)" }, { value: "ascii", label: "Text" }]} value={cfg.execution.write_format}
           onChange={(v) => v && patchConfig({ execution: { write_format: v } })} />
-      </Group>
-      <SectionTitle>Start</SectionTitle>
-      <TextInput size="xs" label="Run label (optional)" value={label} onChange={(e) => setLabel(e.currentTarget.value)} placeholder={`U=${cfg.operating.speed} m/s, yaw=${cfg.operating.yaw_deg}°`} />
-      <ValidationList issues={project!.validation} filter={(i) => i.severity === "error"} />
-      <Button leftSection={<IconPlayerPlay size={16} />} onClick={start} loading={busy} disabled={errors.length > 0}>
-        Run simulation
-      </Button>
-      <Text size="xs" c="dimmed">
-        The case is generated from the current setup, meshed if no matching mesh exists, then solved by a background process. Closing the
-        application does not stop it.
-      </Text>
-      {project!.staleness.mesh.stale && (
-        <Alert color="blue" variant="light" p={6}>
-          <Text size="xs">A new mesh will be generated first (setup changed since the last mesh).</Text>
-        </Alert>
-      )}
+      </SimpleGrid>
 
-      <SectionTitle right={<ActionIcon size="sm" variant="subtle" onClick={refreshRuns}><IconRefresh size={14} /></ActionIcon>}>Runs</SectionTitle>
-      <Table className="compact" highlightOnHover>
-        <Table.Tbody>
-          {runs.map((r) => (
-            <Table.Tr key={r.id} onClick={() => setFocus(r.id)} style={{ cursor: "pointer", background: focus === r.id ? "rgba(34,184,207,0.08)" : undefined }}>
-              <Table.Td>
-                <Text size="xs" fw={600} lineClamp={1}>
-                  {r.label}
-                </Text>
-                <Text size="xs" c="dimmed" className="mono">
-                  {r.id}
-                </Text>
-              </Table.Td>
-              <Table.Td>
-                <StatusBadge status={r.status} size="xs" />
-              </Table.Td>
-              <Table.Td>
-                <Text size="xs">{r.metrics ? `Cd ${fmt(r.metrics.Cd, 3)}` : ""}</Text>
-              </Table.Td>
-            </Table.Tr>
-          ))}
-        </Table.Tbody>
-      </Table>
-    </Stack>
+      <SectionTitle>New run</SectionTitle>
+      <TextInput size="xs" label="Name (optional)" value={label} onChange={(e) => setLabel(e.currentTarget.value)} placeholder={`U=${cfg.operating.speed} m/s, yaw=${cfg.operating.yaw_deg}°`} />
+      <ValidationList issues={project!.validation} filter={(i) => i.severity === "error"} />
+      <Hint style={{ marginTop: 8 }}>
+        {project!.staleness.mesh.stale || !project!.staleness.mesh.current ? "The vehicle is meshed first, then solved. " : "The existing mesh is reused. "}
+        The run continues in the background if AeroBench is closed.
+      </Hint>
+
+      <SectionTitle right={<ActionIcon size="sm" variant="subtle" color="gray" onClick={refreshRuns} aria-label="Refresh"><IconRefresh size={14} /></ActionIcon>}>Runs</SectionTitle>
+      {runs.length === 0 && <Hint>No runs yet.</Hint>}
+      <Stack gap={0}>
+        {runs.map((r) => (
+          <button key={r.id} className="ab-step" aria-current={focus === r.id ? "page" : undefined} onClick={() => setFocus(r.id)}
+            style={{ height: "auto", padding: "7px 10px", gridTemplateColumns: "1fr auto", fontSize: 13 }}>
+            <span style={{ minWidth: 0 }}>
+              <span style={{ display: "block", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "var(--ab-text)" }}>{r.label}</span>
+              <StatusBadge status={r.status} />
+            </span>
+            <span className="num" style={{ fontSize: 14, color: "var(--ab-text-2)" }}>{r.metrics ? `Cd ${fmt(r.metrics.Cd, 3)}` : ""}</span>
+          </button>
+        ))}
+      </Stack>
+    </>
   );
 
   return (
-    <PageLayout side={side} sideWidth={380}>
+    <PageLayout
+      side={side}
+      sideWidth={380}
+      title="Run"
+      lede="Solve the flow with the current setup and follow it as it converges."
+      footer={
+        <Button fullWidth leftSection={<IconPlayerPlay size={16} />} onClick={start} loading={busy} disabled={errors.length > 0}>
+          Run simulation
+        </Button>
+      }
+    >
       {focus ? (
         <RunMonitor runId={focus} jobs={jobs} onResults={() => { selectRun(focus); setSection("results"); }} />
       ) : (
-        <Paper withBorder p="xl" style={{ flex: 1 }}>
-          <Text c="dimmed">No runs yet. Configure the setup and press “Run simulation”.</Text>
-        </Paper>
+        <EmptyState title="No runs yet">Check the setup, then press “Run simulation”.</EmptyState>
       )}
     </PageLayout>
   );
@@ -216,22 +208,25 @@ function RunMonitor({ runId, jobs, onResults }: { runId: string; jobs: any; onRe
     }
   };
 
+  const stepWord = (n: string) => n.replace(/_/g, " ");
   return (
-    <>
-      <Paper withBorder radius="md" p="sm">
-        <Group justify="space-between">
-          <Group gap="xs">
-            <Text fw={700}>{run.label}</Text>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+      <div style={{ padding: "16px 22px 12px", borderBottom: "1px solid var(--ab-line)", background: "var(--ab-surface)" }}>
+        <Group justify="space-between" wrap="nowrap">
+          <Group gap={16} wrap="nowrap" style={{ minWidth: 0 }}>
+            <h2 className="ab-page-title" style={{ fontSize: 19, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              {run.label}
+            </h2>
             <StatusBadge status={run.status} />
             {run.convergence && <StatusBadge status={run.convergence.status} />}
           </Group>
-          <Group gap="xs">
+          <Group gap={6} wrap="nowrap">
             {live && (
               <>
-                <Button size="xs" color="orange" variant="light" leftSection={<IconPlayerStop size={14} />} onClick={() => stop(false)}>
-                  Stop & save
+                <Button size="xs" variant="default" leftSection={<IconPlayerStop size={14} />} onClick={() => stop(false)}>
+                  Stop and save
                 </Button>
-                <Tooltip label="Kill immediately without writing">
+                <Tooltip label="End the solver at once, without saving the current state">
                   <Button size="xs" color="red" variant="subtle" onClick={() => stop(true)}>
                     Kill
                   </Button>
@@ -239,7 +234,7 @@ function RunMonitor({ runId, jobs, onResults }: { runId: string; jobs: any; onRe
               </>
             )}
             {!live && run.status !== "completed" && (
-              <Button size="xs" variant="light" leftSection={<IconPlayerPlay size={14} />} onClick={resume}>
+              <Button size="xs" variant="default" leftSection={<IconPlayerPlay size={14} />} onClick={resume}>
                 Resume
               </Button>
             )}
@@ -250,114 +245,111 @@ function RunMonitor({ runId, jobs, onResults }: { runId: string; jobs: any; onRe
             )}
             <Menu position="bottom-end">
               <Menu.Target>
-                <ActionIcon variant="subtle">
+                <ActionIcon variant="subtle" color="gray" aria-label="More">
                   <IconDots size={16} />
                 </ActionIcon>
               </Menu.Target>
               <Menu.Dropdown>
                 <Menu.Item leftSection={<IconRepeat size={14} />} onClick={reproduce}>
-                  Reproduce run
+                  Run again with identical settings
                 </Menu.Item>
                 {run.status === "completed" && (
                   <Menu.Item leftSection={<IconPlayerPlay size={14} />} onClick={resume}>
-                    Continue +500 iterations
+                    Continue for 500 more iterations
                   </Menu.Item>
                 )}
                 {!live && (
                   <Menu.Item leftSection={<IconRepeat size={14} />} onClick={reingest}>
-                    Re-read results from the case
+                    Read the results from the case again
                   </Menu.Item>
                 )}
               </Menu.Dropdown>
             </Menu>
           </Group>
         </Group>
-        <Progress value={pct} mt="xs" animated={live} />
-        <Group gap={6} mt={6} wrap="wrap">
+        <Progress value={pct} mt={12} size="xs" animated={live} color={run.status === "failed" ? "red" : undefined} />
+        <div style={{ display: "flex", flexWrap: "wrap", columnGap: 14, rowGap: 4, marginTop: 8 }}>
           {steps.map((s: any, i: number) => (
-            <Badge key={i} size="xs" variant={s.status === "running" ? "filled" : "light"}
-              color={s.status === "completed" ? "teal" : s.status === "running" ? "cyan" : s.status === "failed" ? "red" : s.status === "skipped" ? "yellow" : "gray"}>
-              {s.name}
-            </Badge>
+            <StatusDot key={i}
+              tone={s.status === "completed" ? "ok" : s.status === "running" ? "live" : s.status === "failed" ? "err" : s.status === "skipped" ? "warn" : "idle"}
+              label={<span style={{ color: s.status === "running" ? "var(--ab-text)" : undefined }}>{stepWord(s.name)}</span>} />
           ))}
-        </Group>
-      </Paper>
-      <Paper withBorder radius="md" p="sm" style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-        <Tabs value={tab} onChange={setTab} style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-          <Tabs.List>
-            <Tabs.Tab value="monitor">Convergence</Tabs.Tab>
-            <Tabs.Tab value="log">Solver log</Tabs.Tab>
-            <Tabs.Tab value="details">Details</Tabs.Tab>
-          </Tabs.List>
-          <Tabs.Panel value="monitor" pt="xs" style={{ flex: 1, overflow: "auto" }}>
-            <SimpleGrid cols={{ base: 1, xl: 2 }}>
-              <div>
-                <Text size="xs" fw={700}>
-                  Residuals
-                </Text>
-                <ResidualChart series={series} height={300} />
-              </div>
-              <div>
-                <Text size="xs" fw={700}>
-                  Force coefficients
-                </Text>
-                <CoefficientChart series={series} keys={["Cd", "Cl", "Cl_front", "Cl_rear"]} window={run.metrics?.averaging_window} height={300} />
-              </div>
-            </SimpleGrid>
-            {run.convergence && (
-              <Paper withBorder p="xs" mt="xs">
-                <Text size="sm" fw={600}>
-                  {run.convergence.summary}
-                </Text>
-                <Table className="compact" mt={4}>
-                  <Table.Thead>
-                    <Table.Tr>
-                      <Table.Th>Criterion</Table.Th>
-                      <Table.Th>Value</Table.Th>
-                      <Table.Th>Threshold</Table.Th>
-                      <Table.Th />
+        </div>
+      </div>
+      <Tabs value={tab} onChange={setTab} style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+        <Tabs.List px={14}>
+          <Tabs.Tab value="monitor">Convergence</Tabs.Tab>
+          <Tabs.Tab value="log">Solver output</Tabs.Tab>
+          <Tabs.Tab value="details">Details</Tabs.Tab>
+        </Tabs.List>
+        <Tabs.Panel value="monitor" style={{ flex: 1, overflow: "auto", padding: "14px 22px" }}>
+          <SimpleGrid cols={{ base: 1, xl: 2 }} spacing="lg">
+            <div>
+              <Text size="sm" fw={600}>
+                Residuals
+              </Text>
+              <ResidualChart series={series} height={300} />
+            </div>
+            <div>
+              <Text size="sm" fw={600}>
+                Force coefficients
+              </Text>
+              <CoefficientChart series={series} keys={["Cd", "Cl", "Cl_front", "Cl_rear"]} window={run.metrics?.averaging_window} height={300} />
+            </div>
+          </SimpleGrid>
+          {run.convergence && (
+            <div style={{ marginTop: 14, maxWidth: 900 }}>
+              <SectionTitle>{run.convergence.summary}</SectionTitle>
+              <Table className="compact" withRowBorders={false}>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Criterion</Table.Th>
+                    <Table.Th>Value</Table.Th>
+                    <Table.Th>Limit</Table.Th>
+                    <Table.Th />
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {run.convergence.criteria.map((c: any, i: number) => (
+                    <Table.Tr key={i}>
+                      <Table.Td>{c.name}</Table.Td>
+                      <Table.Td>{fmt(c.value, 4)}</Table.Td>
+                      <Table.Td>
+                        {fmt(c.threshold, 4)} {c.note}
+                      </Table.Td>
+                      <Table.Td>{c.passed === null ? "" : c.passed ? <StatusDot tone="ok" label="Met" /> : <StatusDot tone="warn" label="Not yet" />}</Table.Td>
                     </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {run.convergence.criteria.map((c: any, i: number) => (
-                      <Table.Tr key={i}>
-                        <Table.Td>{c.name}</Table.Td>
-                        <Table.Td>{fmt(c.value, 4)}</Table.Td>
-                        <Table.Td>
-                          {fmt(c.threshold, 4)} {c.note}
-                        </Table.Td>
-                        <Table.Td>{c.passed === null ? "" : c.passed ? <Badge size="xs" color="teal">pass</Badge> : <Badge size="xs" color="yellow">open</Badge>}</Table.Td>
-                      </Table.Tr>
-                    ))}
-                  </Table.Tbody>
-                </Table>
-              </Paper>
-            )}
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </div>
+          )}
+          <div style={{ marginTop: 14, maxWidth: 900 }}>
             <DiagnosticList items={run.diagnostics} />
-          </Tabs.Panel>
-          <Tabs.Panel value="log" pt="xs" style={{ flex: 1, minHeight: 0 }}>
-            <pre ref={logRef} className="log-view" style={{ height: "100%", maxHeight: "60vh", margin: 0 }}>
-              {log || "Waiting for output…"}
-            </pre>
-          </Tabs.Panel>
-          <Tabs.Panel value="details" pt="xs">
-            <KeyValue
-              rows={[
-                ["Run id", run.id],
-                ["Mesh", run.mesh_revision_id],
-                ["Geometry revision", run.geometry_revision_id],
-                ["Solver", `${run.foam_fork} ${run.foam_version} via ${run.provider}`],
-                ["Cores", run.n_procs],
-                ["Iterations", run.iterations ?? "—"],
-                ["Wall time", duration(run.wall_seconds)],
-                ["Configuration hash", <span className="mono">{run.config_hash?.slice(0, 16)}</span>],
-                ["Started", run.started_at || "—"],
-                ["Ended", run.ended_at || "—"],
-              ]}
-            />
-          </Tabs.Panel>
-        </Tabs>
-      </Paper>
-    </>
+          </div>
+        </Tabs.Panel>
+        <Tabs.Panel value="log" style={{ flex: 1, minHeight: 0, padding: "12px 22px" }}>
+          <pre ref={logRef} className="log-view" style={{ height: "100%", maxHeight: "calc(100vh - 260px)", margin: 0 }}>
+            {log || "Waiting for output…"}
+          </pre>
+        </Tabs.Panel>
+        <Tabs.Panel value="details" style={{ padding: "14px 22px", maxWidth: 640 }}>
+          <KeyValue
+            rows={[
+              ["Run", run.id],
+              ["Mesh", run.mesh_revision_id],
+              ["Geometry version", run.geometry_revision_id],
+              ["Solver", `${run.foam_fork} ${run.foam_version} via ${run.provider}`],
+              ["Cores", run.n_procs],
+              ["Iterations", run.iterations ?? "—"],
+              ["Wall time", duration(run.wall_seconds)],
+              ["Configuration hash", <span className="mono">{run.config_hash?.slice(0, 16)}</span>],
+              ["Started", run.started_at || "—"],
+              ["Ended", run.ended_at || "—"],
+            ]}
+          />
+        </Tabs.Panel>
+      </Tabs>
+    </div>
   );
 }

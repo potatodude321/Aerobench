@@ -194,7 +194,7 @@ export function StudyList({ list, selected, onSelect }: { list: any[]; selected:
         {list.map((s) => {
           const done = (s.counts.completed || 0) + (s.counts.failed || 0) + (s.counts.cancelled || 0) + (s.counts.skipped || 0);
           return (
-            <Table.Tr key={s.id} onClick={() => onSelect(s.id)} style={{ cursor: "pointer", background: selected === s.id ? "rgba(34,184,207,0.08)" : undefined }}>
+            <Table.Tr key={s.id} onClick={() => onSelect(s.id)} style={{ cursor: "pointer", background: selected === s.id ? "var(--ab-accent-dim)" : undefined }}>
               <Table.Td>
                 <Text size="xs" fw={600}>{s.name}</Text>
                 <Text size="xs" c="dimmed" className="mono">{s.id}</Text>

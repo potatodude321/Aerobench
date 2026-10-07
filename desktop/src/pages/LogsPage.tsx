@@ -39,7 +39,7 @@ export function LogsPage() {
           <Table className="compact" highlightOnHover>
             <Table.Tbody>
               {list.map((j) => (
-                <Table.Tr key={j.id} onClick={() => setSel(j.id)} style={{ cursor: "pointer", background: sel === j.id ? "rgba(34,184,207,0.08)" : undefined }}>
+                <Table.Tr key={j.id} onClick={() => setSel(j.id)} style={{ cursor: "pointer", background: sel === j.id ? "var(--ab-accent-dim)" : undefined }}>
                   <Table.Td>
                     <Text size="xs" fw={600}>
                       {j.kind} → {j.target_id}
@@ -68,7 +68,7 @@ export function LogsPage() {
             <Group gap={4} mb="xs">
               {job.state?.steps.map((s: any, i: number) => (
                 <Badge key={i} size="sm" style={{ cursor: "pointer" }} variant={i === step ? "filled" : "light"}
-                  color={s.status === "completed" ? "teal" : s.status === "failed" ? "red" : s.status === "running" ? "cyan" : "gray"} onClick={() => setStep(i)}>
+                  color={s.status === "completed" ? "teal" : s.status === "failed" ? "red" : s.status === "running" ? "ice" : "gray"} onClick={() => setStep(i)}>
                   {i}. {s.name}
                 </Badge>
               ))}

@@ -188,7 +188,7 @@ class VizService:
         elif op == "mesh_patches":
             if not params.get("patches"):
                 raise AeroBenchError.make("visualisation.bad_params", ErrorCategory.VISUALISATION, "No patches selected.")
-        key = sha256_json({"mesh": mesh_id, "sig": self._mesh_signature(mdir), "op": op, "params": params, "v": 1})[:24]
+        key = sha256_json({"mesh": mesh_id, "sig": self._mesh_signature(mdir), "op": op, "params": params, "v": 2})[:24]
         out = project.cache_dir("viz", mesh_id) / f"{key}.abg"
         if out.exists():
             from ..viz.payload import read_header

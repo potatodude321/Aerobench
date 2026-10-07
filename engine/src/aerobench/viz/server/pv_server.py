@@ -515,7 +515,12 @@ def op_mesh_slice(p):
             pass
     sl = Slice(Input=cs)
     sl.SliceType = "Plane"
-    sl.SliceType.Origin = p["origin"]
+    # A plane exactly through mesh faces (the centreline of a symmetric background mesh is
+    # one) gives degenerate, ambiguous cuts: move it off by a tiny fraction of a cell.
+    n = np.asarray(p["normal"], float)
+    n = n / (np.linalg.norm(n) or 1.0)
+    eps = 1.37e-4 * float(p.get("base_cell") or 0.01)
+    sl.SliceType.Origin = [float(x) for x in np.asarray(p["origin"], float) + eps * n]
     sl.SliceType.Normal = p["normal"]
     sl.Triangulatetheslice = 0
     pd = _fetch_polydata(ExtractSurface(Input=MergeBlocks(Input=sl)))

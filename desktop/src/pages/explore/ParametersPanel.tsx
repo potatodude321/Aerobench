@@ -133,7 +133,7 @@ export function ParametersPanel() {
       {!params.length && <Text size="xs" c="dimmed">No geometry parameters yet. Parameters morph or move components; studies and optimisations use them as variables.</Text>}
       <Stack gap={2}>
         {params.map((x, i) => (
-          <Group key={i} justify="space-between" p={4} style={{ cursor: "pointer", borderRadius: 4, background: i === sel ? "rgba(34,184,207,0.1)" : undefined }} onClick={() => setSel(i)}>
+          <Group key={i} justify="space-between" p={4} style={{ cursor: "pointer", borderRadius: 4, background: i === sel ? "var(--ab-accent-dim)" : undefined }} onClick={() => setSel(i)}>
             <Text size="xs" fw={600}>{x.name} <Text span size="xs" c="dimmed" className="mono">param.{x.id}</Text></Text>
             <Badge size="xs" variant="outline">{x.deformation.kind}</Badge>
           </Group>
@@ -239,7 +239,7 @@ export function ParametersPanel() {
   );
 
   return (
-    <PageLayout side={side} sideWidth={460}>
+    <PageLayout side={side} sideWidth={460} pad>
       <div style={{ position: "relative", height: "100%" }}>
         <Viewport3D onReady={onViewer} />
         <div style={{ position: "absolute", left: 12, bottom: 12, width: 300 }}>

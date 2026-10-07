@@ -1,29 +1,28 @@
-import { Alert, Badge, Button, Checkbox, Group, NumberInput, Paper, Progress, SegmentedControl, SimpleGrid, Stack, Table, Text, Tooltip } from "@mantine/core";
+import { Button, Checkbox, Group, Loader, NumberInput, Progress, SegmentedControl, SimpleGrid, Slider, Stack, Switch, Table, Text, Tooltip } from "@mantine/core";
 import { IconGridDots, IconRefresh } from "@tabler/icons-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { api } from "../api/client";
 import type { MeshPlan } from "../api/types";
 import { fmt } from "../components/ColorLegend";
 import { notifyError, notifyOk } from "../components/notify";
-import { DiagnosticList, KeyValue, NumField, PageLayout, SectionTitle, StatusBadge } from "../components/ui";
+import { DiagnosticList, Hint, KeyValue, NumField, PageLayout, SectionTitle, StatusBadge, StatusDot } from "../components/ui";
 import { pid, useApp } from "../state/store";
 import { decodeAbg } from "../viewport/abg";
+import { LEVEL_COLORS, levelColorCss } from "../viewport/colormaps";
 import { Viewer } from "../viewport/Viewer";
 import { Viewport3D } from "../viewport/Viewport3D";
 import { usePlan } from "./TunnelPage";
-
-const LEVEL_COLORS = [0x495057, 0x5c7cfa, 0x339af0, 0x22b8cf, 0x20c997, 0x94d82d, 0xfcc419, 0xff922b, 0xff6b6b, 0xf06595];
 
 export function drawPlan(v: Viewer, plan: MeshPlan, opts: { regions?: boolean; domain?: boolean; hiddenRegions?: string[] } = {}) {
   v.clearOverlays();
   const [x0, y0, z0] = plan.domain_min;
   const [x1, y1, z1] = plan.domain_max;
   if (opts.domain !== false) {
-    v.addBox([x0, y0, z0], [x1, y1, z1], 0x868e96, 0.0, true);
+    v.addBox([x0, y0, z0], [x1, y1, z1], 0x59616c, 0.0, true);
     v.addGround([x0, y0, z0], [x1, y1, z1], plan.ground_z);
     const L = plan.vehicle_bbox_max[0] - plan.vehicle_bbox_min[0];
-    v.addArrow([x0 + 0.3 * L, 0.5 * (y0 + y1), 0.5 * (z0 + z1)], [Math.cos((plan.yaw_range[0] * Math.PI) / 180), -Math.sin((plan.yaw_range[0] * Math.PI) / 180), 0], L, 0x4dabf7);
+    v.addArrow([x0 + 0.3 * L, 0.5 * (y0 + y1), 0.5 * (z0 + z1)], [Math.cos((plan.yaw_range[0] * Math.PI) / 180), -Math.sin((plan.yaw_range[0] * Math.PI) / 180), 0], L, 0x8db7e0);
   }
   if (opts.regions) {
     for (const r of plan.regions) {
@@ -31,15 +30,57 @@ export function drawPlan(v: Viewer, plan: MeshPlan, opts: { regions?: boolean; d
       const col = LEVEL_COLORS[Math.min(r.level, LEVEL_COLORS.length - 1)];
       const s = r.shape;
       if (s.kind === "box") v.addBox(s.min, s.max, col, 0.05, true, r.id);
-      else if (s.kind === "cylinder") v.addCylinder(s.point1, s.point2, s.radius, col, 0.12);
+      else if (s.kind === "cylinder") v.addCylinder(s.point1, s.point2, s.radius, col, 0.1);
       else if (s.kind === "rotated_box") v.addRotatedBox(s.origin, s.span, s.e1, s.e3, col, 0.05);
     }
-    v.addPoint(plan.location_in_mesh, 0xff922b, Math.max(0.03, plan.base_cell * 0.15));
+    v.addPoint(plan.location_in_mesh, 0xd6a24a, Math.max(0.03, plan.base_cell * 0.15));
   }
 }
 
+type Cut = "off" | "y" | "x" | "z";
+const CUT_AXIS: Record<Exclude<Cut, "off">, number> = { x: 0, y: 1, z: 2 };
+const CUT_NORMAL: Record<Exclude<Cut, "off">, number[]> = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] };
+
+interface MeshView {
+  mesh_id: string;
+  status: string;
+  patches: { vehicle: string[]; ground: string[]; domain: string[] };
+  plan: MeshPlan | null;
+  cells: number | null;
+}
+
+interface Show {
+  vehicle: boolean;
+  ground: boolean;
+  boxes: boolean;
+  domain: boolean;
+  wireframe: boolean;
+}
+
+function LevelLegend({ levels, base }: { levels: number[]; base: number }) {
+  if (!levels.length) return null;
+  return (
+    <div className="ab-float" style={{ left: 12, bottom: 12, padding: "8px 10px" }}>
+      <Text size="xs" c="dimmed" mb={4}>
+        Refinement level of the cut cells
+      </Text>
+      <Group gap={10}>
+        {levels.map((l) => (
+          <Group key={l} gap={5} wrap="nowrap">
+            <span style={{ width: 10, height: 10, borderRadius: 2, background: levelColorCss(l), display: "inline-block" }} />
+            <Text size="xs">
+              {l}
+              <span style={{ color: "var(--ab-text-3)" }}> · {fmt((base / 2 ** l) * 1000, base / 2 ** l < 0.01 ? 1 : 0)} mm</span>
+            </Text>
+          </Group>
+        ))}
+      </Group>
+    </div>
+  );
+}
+
 export function MeshPage() {
-  const { project, patchConfig, geometryVersion, jobs, refreshProject } = useApp();
+  const { project, patchConfig, geometryVersion, jobs, refreshProject, setSection } = useApp();
   const cfg = project!.config;
   const m = cfg.mesh;
   const [plan, extra, loading] = usePlan();
@@ -50,6 +91,14 @@ export function MeshPage() {
   const [cores, setCores] = useState<number>(cfg.execution.n_procs);
   const viewer = useRef<Viewer | null>(null);
   const [geomLoaded, setGeomLoaded] = useState(0);
+  const [mode, setMode] = useState<"plan" | "mesh">("plan");
+  const [view, setView] = useState<MeshView | null>(null);
+  const [show, setShow] = useState<Show>({ vehicle: true, ground: false, boxes: false, domain: true, wireframe: false });
+  const [cut, setCut] = useState<Cut>("off");
+  const [cutPos, setCutPos] = useState<Record<string, number>>({});
+  const [layerBusy, setLayerBusy] = useState<string | null>(null);
+  const [levels, setLevels] = useState<number[]>([]);
+  const autoMode = useRef(false);
 
   const loadMeshes = useCallback(async () => {
     try {
@@ -66,6 +115,17 @@ export function MeshPage() {
     loadMeshes();
   }, [loadMeshes, jobs.recent.map((j: any) => j.status).join()]);
 
+  const viewable = !!current && ["completed", "failed"].includes(current.status) && !!current.cells;
+  // open on the generated mesh once one exists (the first time only; the user's choice wins)
+  useEffect(() => {
+    if (viewable && !autoMode.current) {
+      autoMode.current = true;
+      setMode("mesh");
+    }
+    if (!viewable) setMode("plan");
+  }, [viewable, current?.id]);
+
+  // vehicle surface (the triangulated CAD) in both modes
   useEffect(() => {
     const v = viewer.current;
     if (!v || !cfg.geometry.revision_id) return;
@@ -75,15 +135,184 @@ export function MeshPage() {
     }).catch(notifyError);
   }, [cfg.geometry.revision_id, geometryVersion]);
 
+  // ---------------------------------------------------------------- planning view
   useEffect(() => {
     const v = viewer.current;
-    if (!v || !plan) return;
+    if (!v || !plan || mode !== "plan") return;
+    v.clearMeshLayers();
+    v.setSectionClip(null);
+    v.setGeometryVisible(true);
     drawPlan(v, plan, { regions: true, domain: true, hiddenRegions: hidden });
     const lo = plan.vehicle_bbox_min;
     const hi = plan.vehicle_bbox_max;
     const L = hi[0] - lo[0];
     v.view("iso", new THREE.Box3(new THREE.Vector3(lo[0] - 0.3 * L, lo[1] - 0.5 * L, lo[2]), new THREE.Vector3(hi[0] + 1.5 * L, hi[1] + 0.5 * L, hi[2] + 0.3 * L)));
-  }, [plan, hidden, geomLoaded]);
+  }, [plan, hidden, geomLoaded, mode]);
+
+  // ---------------------------------------------------------------- generated mesh view
+  const meshId = viewable ? current.id : null;
+  const [opening, setOpening] = useState(false);
+  useEffect(() => {
+    if (mode !== "mesh" || !meshId) return;
+    let cancelled = false;
+    setView(null);
+    setOpening(true);
+    // nothing of the planning view may linger while the mesh is being opened
+    viewer.current?.clearOverlays();
+    viewer.current?.setGeometryVisible(false);
+    api
+      .get<MeshView>(`/api/p/${pid()}/meshes/${meshId}/view`)
+      .then((vw) => {
+        if (cancelled) return;
+        setView(vw);
+        const p = vw.plan;
+        if (p) {
+          const lo = p.vehicle_bbox_min;
+          const hi = p.vehicle_bbox_max;
+          setCutPos({ x: 0.5 * (lo[0] + hi[0]), y: p.half_model ? lo[1] + 0.25 * (hi[1] - lo[1]) : 0.5 * (lo[1] + hi[1]), z: lo[2] + 0.3 * (hi[2] - lo[2]) });
+        }
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        notifyError(e, "The generated mesh cannot be shown");
+        viewer.current?.setGeometryVisible(true);
+      })
+      .finally(() => !cancelled && setOpening(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, meshId]);
+
+  const fetchLayer = useCallback(
+    async (id: string, op: string, params: any) => {
+      const res = await api.post(`/api/p/${pid()}/meshes/${meshId}/viz/extract`, { op, params });
+      const buf = await api.binary(`/api/p/${pid()}/meshes/${meshId}/viz/payload/${res.key}`);
+      return { id, abg: decodeAbg(buf) };
+    },
+    [meshId],
+  );
+
+  const patchStyle = (which: "vehicle" | "ground") => ({
+    mode: show.wireframe ? ("wireframe" as const) : ("edges" as const),
+    colorBy: "solid" as const,
+    color: which === "vehicle" ? 0xa3acb7 : 0x59616c,
+    clip: true,
+    visible: show[which],
+  });
+
+  // patch layers (vehicle, ground): fetched once per mesh, then only restyled
+  useEffect(() => {
+    const v = viewer.current;
+    if (!v || mode !== "mesh" || !view) return;
+    v.setGeometryVisible(false);
+    let cancelled = false;
+    (async () => {
+      for (const which of ["vehicle", "ground"] as const) {
+        const id = `mesh:${view.mesh_id}:${which}`;
+        const patches = view.patches[which];
+        if (!show[which] || !patches.length) {
+          if (v.hasMeshLayer(id)) v.styleMeshLayer(id, { visible: false });
+          continue;
+        }
+        if (!v.hasMeshLayer(id)) {
+          setLayerBusy(which === "vehicle" ? "Loading the vehicle surface mesh…" : "Loading the ground mesh…");
+          try {
+            const { abg } = await fetchLayer(id, "mesh_patches", { patches });
+            if (cancelled) return;
+            v.setMeshLayer(id, abg, patchStyle(which));
+          } catch (e) {
+            if (!cancelled) notifyError(e, "Could not show the surface mesh");
+          } finally {
+            if (!cancelled) setLayerBusy(null);
+          }
+        } else v.styleMeshLayer(id, patchStyle(which));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, view, show.vehicle, show.ground, show.wireframe]);
+
+  // overlays in mesh mode: refinement boxes and domain as they were for this mesh
+  useEffect(() => {
+    const v = viewer.current;
+    if (!v || mode !== "mesh" || !view?.plan) return;
+    v.clearOverlays();
+    drawPlan(v, view.plan, { regions: show.boxes, domain: show.domain });
+  }, [mode, view, show.boxes, show.domain]);
+
+  // camera when the mesh view opens
+  useEffect(() => {
+    const v = viewer.current;
+    if (!v || mode !== "mesh" || !view?.plan) return;
+    const lo = view.plan.vehicle_bbox_min;
+    const hi = view.plan.vehicle_bbox_max;
+    const L = hi[0] - lo[0];
+    v.view("iso", new THREE.Box3(new THREE.Vector3(lo[0] - 0.1 * L, lo[1] - 0.15 * L, lo[2]), new THREE.Vector3(hi[0] + 0.2 * L, hi[1] + 0.15 * L, hi[2] + 0.1 * L)));
+  }, [mode, view?.mesh_id]);
+
+  // the cut through the volume mesh (debounced while the slider moves; cached by the engine)
+  const cutReq = useRef(0);
+  useEffect(() => {
+    const v = viewer.current;
+    if (!v || mode !== "mesh" || !view) return;
+    const id = `mesh:${view.mesh_id}:cut`;
+    if (cut === "off") {
+      v.removeMeshLayer(id);
+      v.setSectionClip(null);
+      setLevels([]);
+      return;
+    }
+    const axis = CUT_AXIS[cut];
+    const pos = cutPos[cut] ?? 0;
+    const origin = [0, 0, 0];
+    origin[axis] = pos;
+    v.setSectionClip(CUT_NORMAL[cut], origin);
+    const my = ++cutReq.current;
+    const t = setTimeout(async () => {
+      setLayerBusy("Cutting through the volume mesh…");
+      try {
+        const { abg } = await fetchLayer(id, "mesh_slice", { origin, normal: CUT_NORMAL[cut] });
+        if (my !== cutReq.current) return;
+        v.setMeshLayer(id, abg, { mode: show.wireframe ? "wireframe" : "edges", colorBy: "level" });
+        setLevels(abg.header.levels || []);
+      } catch (e) {
+        if (my === cutReq.current) notifyError(e, "Could not cut the mesh here");
+      } finally {
+        if (my === cutReq.current) setLayerBusy(null);
+      }
+    }, 280);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, view, cut, cutPos[cut === "off" ? "x" : cut]]);
+
+  useEffect(() => {
+    const v = viewer.current;
+    if (!v || !view) return;
+    v.styleMeshLayer(`mesh:${view.mesh_id}:cut`, { mode: show.wireframe ? "wireframe" : "edges" });
+  }, [show.wireframe, view]);
+
+  const chooseCut = (c: Cut) => {
+    setCut(c);
+    const v = viewer.current;
+    if (!v || !view?.plan || c === "off") return;
+    const lo = view.plan.vehicle_bbox_min;
+    const hi = view.plan.vehicle_bbox_max;
+    const L = hi[0] - lo[0];
+    const box = new THREE.Box3(new THREE.Vector3(lo[0] - 0.5 * L, lo[1] - 0.2 * L, lo[2]), new THREE.Vector3(hi[0] + 1.0 * L, hi[1] + 0.2 * L, hi[2] + 0.4 * L));
+    v.view(c === "y" ? "side" : c === "x" ? "rear" : "top", box);
+  };
+
+  // leaving the page or the mode: restore the plain vehicle
+  useEffect(() => {
+    const v = viewer.current;
+    if (!v) return;
+    if (mode === "plan") {
+      v.setGeometryVisible(true);
+      setCut("off");
+    }
+  }, [mode]);
 
   const setPreset = async (p: string) => {
     try {
@@ -119,7 +348,7 @@ export function MeshPage() {
     setBusy(true);
     try {
       const r = await api.post(`/api/p/${pid()}/meshes`, { force, nprocs: cores });
-      notifyOk(r.reused ? `An identical mesh already exists (${r.mesh_id}).` : `Meshing queued (${r.mesh_id}).`);
+      notifyOk(r.reused ? "This mesh already exists for the current settings." : "Meshing started.");
       await loadMeshes();
       await refreshProject();
     } catch (e) {
@@ -134,38 +363,101 @@ export function MeshPage() {
   const meshJob = current && jobs.states[current.job_id];
   const coverage = current?.snappy?.layers || [];
   const q = current?.quality;
+  const st = project!.staleness.mesh;
+  const viewPlan = mode === "mesh" ? view?.plan : plan;
+  const span = useMemo(() => {
+    const p = viewPlan;
+    if (!p || cut === "off") return null;
+    const a = CUT_AXIS[cut];
+    return [p.domain_min[a], p.domain_max[a]];
+  }, [viewPlan, cut]);
+
+  const latest = current && (
+    <>
+      <SectionTitle first right={<StatusBadge status={meshJob && !["completed", "failed"].includes(meshJob.status) ? meshJob.status : current.status} />}>
+        Latest mesh
+      </SectionTitle>
+      {meshJob && !["completed", "failed"].includes(meshJob.status) && (
+        <Stack gap={4} mb={10}>
+          <Progress value={(100 * meshJob.step_index) / Math.max(1, meshJob.steps.length)} animated />
+          <Text size="xs" c="dimmed">
+            {meshJob.steps[meshJob.step_index]?.name} — step {meshJob.step_index + 1} of {meshJob.steps.length}
+          </Text>
+        </Stack>
+      )}
+      {st.stale && (
+        <Hint style={{ color: "var(--ab-warn)", marginBottom: 8 }}>The settings changed since this mesh was made. It is kept for the runs that used it; the next run meshes again.</Hint>
+      )}
+      {q ? (
+        <KeyValue
+          rows={[
+            ["Cells", q.cells?.toLocaleString()],
+            ["Worst non-orthogonality", `${fmt(q.max_non_ortho, 1)}°  (mean ${fmt(q.avg_non_ortho, 1)}°)`],
+            ["Worst skewness", fmt(q.max_skewness, 2)],
+            ["Largest aspect ratio", fmt(q.max_aspect_ratio, 1)],
+            ["Failed quality checks", q.failed_checks],
+            ["Boundary layer coverage", current.snappy?.overall_layer_coverage != null ? `${(current.snappy.overall_layer_coverage * 100).toFixed(0)} %` : "—"],
+          ]}
+        />
+      ) : (
+        <Hint>Quality figures appear when meshing has finished.</Hint>
+      )}
+      {coverage.length > 0 && (
+        <Stack gap={4} mt={10}>
+          {coverage.map((l: any) => (
+            <Group key={l.patch} gap={8} wrap="nowrap">
+              <Text size="xs" w={92} truncate>
+                {l.patch}
+              </Text>
+              <Progress style={{ flex: 1 }} size="xs" value={Math.min(100, l.coverage * 100)} color={l.coverage > 0.7 ? "teal" : l.coverage > 0.4 ? "yellow" : "red"} />
+              <Text size="xs" c="dimmed" w={58} ta="right">
+                {fmt(l.mesh_layers, 1)} of {l.target_layers}
+              </Text>
+            </Group>
+          ))}
+        </Stack>
+      )}
+      {(current.diagnostics || []).filter((d: any) => typeof d === "object").length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <DiagnosticList items={(current.diagnostics || []).filter((d: any) => typeof d === "object")} />
+        </div>
+      )}
+      {meshes.length > 1 && <Hint style={{ marginTop: 8 }}>{meshes.length} meshes in this project; earlier ones are kept for the runs that used them.</Hint>}
+    </>
+  );
 
   const side = (
-    <Stack gap="xs">
-      <SectionTitle right={loading && <Badge size="xs" variant="light">updating…</Badge>}>Mesh preset</SectionTitle>
+    <>
+      {latest}
+      <SectionTitle first={!current} right={loading ? <Loader size={12} /> : undefined}>
+        Mesh density
+      </SectionTitle>
       <SegmentedControl size="xs" fullWidth value={m.preset} onChange={setPreset}
         data={[{ value: "fast", label: "Fast" }, { value: "balanced", label: "Balanced" }, { value: "high_accuracy", label: "High accuracy" }, { value: "custom", label: "Custom" }]} />
       {plan && (
-        <Paper withBorder p="xs">
+        <div style={{ marginTop: 10 }}>
           <KeyValue
             rows={[
               ["Background cell (level 0)", `${fmt(plan.base_cell * 1000, 1)} mm`],
-              ["Body surface cell", `${fmt(plan.body_cell * 1000, 2)} mm (level ${plan.body_level})`],
-              ["Estimated cells", `${(plan.estimate_cells / 1e6).toFixed(2)} M  (${(plan.estimate_range[0] / 1e6).toFixed(1)}–${(plan.estimate_range[1] / 1e6).toFixed(1)} M)`],
-              ["Estimated memory", `${plan.estimate_memory_gb[0]}–${plan.estimate_memory_gb[1]} GB`],
+              ["Cells on the body", `${fmt(plan.body_cell * 1000, 2)} mm (level ${plan.body_level})`],
+              ["Expected cells", `${(plan.estimate_cells / 1e6).toFixed(2)} M  (${(plan.estimate_range[0] / 1e6).toFixed(1)}–${(plan.estimate_range[1] / 1e6).toFixed(1)} M)`],
+              ["Expected memory", `${plan.estimate_memory_gb[0]}–${plan.estimate_memory_gb[1]} GB`],
             ]}
           />
-          <Text size="xs" c="dimmed" mt={4}>
-            Estimates only — the real count is known after snappyHexMesh.
-          </Text>
-        </Paper>
+          <Hint style={{ marginTop: 4 }}>Estimates; the real count is known after meshing.</Hint>
+        </div>
       )}
       {m.preset === "custom" && (
         <NumField label="Background cell size" units="m" value={m.base_cell_size ?? plan?.base_cell} decimals={4} onCommit={(v) => patchConfig({ mesh: { base_cell_size: v } })} />
       )}
 
       <SectionTitle>Surface refinement</SectionTitle>
-      <Table className="compact">
+      <Table className="compact" withRowBorders={false}>
         <Table.Thead>
           <Table.Tr>
-            <Table.Th>Component</Table.Th>
-            <Table.Th>Min</Table.Th>
-            <Table.Th>Max</Table.Th>
+            <Table.Th>Part</Table.Th>
+            <Table.Th>Min level</Table.Th>
+            <Table.Th>Max level</Table.Th>
             <Table.Th>Cell</Table.Th>
           </Table.Tr>
         </Table.Thead>
@@ -173,15 +465,13 @@ export function MeshPage() {
           {plan?.surfaces.map((s) => (
             <Table.Tr key={s.component_id}>
               <Table.Td>
-                <Text size="xs" className="mono">
-                  {s.component_id}
-                </Text>
+                <Text size="xs">{s.component_id}</Text>
               </Table.Td>
               <Table.Td>
-                <NumberInput size="xs" w={56} min={0} max={12} value={s.min_level} onChange={(v) => typeof v === "number" && toCustomSurface(s.component_id, v, s.max_level)} />
+                <NumberInput size="xs" w={58} min={0} max={12} value={s.min_level} onChange={(v) => typeof v === "number" && toCustomSurface(s.component_id, v, s.max_level)} />
               </Table.Td>
               <Table.Td>
-                <NumberInput size="xs" w={56} min={0} max={12} value={s.max_level} onChange={(v) => typeof v === "number" && toCustomSurface(s.component_id, s.min_level, v)} />
+                <NumberInput size="xs" w={58} min={0} max={12} value={s.max_level} onChange={(v) => typeof v === "number" && toCustomSurface(s.component_id, s.min_level, v)} />
               </Table.Td>
               <Table.Td>
                 <Text size="xs">{fmt(s.cell_size * 1000, 1)} mm</Text>
@@ -191,22 +481,24 @@ export function MeshPage() {
         </Table.Tbody>
       </Table>
 
-      <SectionTitle>Refinement volumes</SectionTitle>
-      <Table className="compact">
+      <SectionTitle>Refinement boxes</SectionTitle>
+      <Table className="compact" withRowBorders={false}>
         <Table.Tbody>
           {plan?.regions.map((r) => (
             <Table.Tr key={r.id}>
-              <Table.Td>
-                <Checkbox size="xs" checked={!hidden.includes(r.id)} onChange={(e) => setHidden((h) => (e.currentTarget.checked ? h.filter((x) => x !== r.id) : [...h, r.id]))} />
+              <Table.Td w={28}>
+                <Tooltip label="Show in the planning view">
+                  <Checkbox size="xs" checked={!hidden.includes(r.id)} onChange={(e) => setHidden((h) => (e.currentTarget.checked ? h.filter((x) => x !== r.id) : [...h, r.id]))} />
+                </Tooltip>
               </Table.Td>
               <Table.Td>
-                <Text size="xs">{r.name}</Text>
-                <Text size="xs" c="dimmed">
-                  {r.kind}
-                </Text>
+                <Group gap={6} wrap="nowrap">
+                  <span style={{ width: 8, height: 8, borderRadius: 2, background: levelColorCss(r.level), flexShrink: 0 }} />
+                  <Text size="xs">{r.name}</Text>
+                </Group>
               </Table.Td>
               <Table.Td>
-                <NumberInput size="xs" w={56} min={0} max={12} value={r.level} onChange={(v) => typeof v === "number" && setRegionLevel(r.id, v)} />
+                <NumberInput size="xs" w={58} min={0} max={12} value={r.level} onChange={(v) => typeof v === "number" && setRegionLevel(r.id, v)} />
               </Table.Td>
               <Table.Td>
                 <Text size="xs">{fmt(r.cell_size * 1000, 0)} mm</Text>
@@ -216,161 +508,120 @@ export function MeshPage() {
         </Table.Tbody>
       </Table>
       {plan && plan.distance_levels.length > 0 && (
-        <Text size="xs" c="dimmed">
-          Plus near-wall bands: {plan.distance_levels.map(([d, l]) => `level ${l} within ${fmt(d * 1000, 0)} mm`).join(", ")}.
-        </Text>
+        <Hint style={{ marginTop: 6 }}>Also near the walls: {plan.distance_levels.map(([d, l]) => `level ${l} within ${fmt(d * 1000, 0)} mm`).join(", ")}.</Hint>
       )}
 
       <SectionTitle>Boundary layer</SectionTitle>
       <SegmentedControl size="xs" fullWidth value={lay.mode} onChange={(v) => patchConfig({ mesh: { layers: { mode: v } } })}
         data={[{ value: "target_yplus", label: "Target y+" }, { value: "relative", label: "Relative" }, { value: "none", label: "No layers" }]} />
-      <SimpleGrid cols={3} spacing="xs">
+      <SimpleGrid cols={3} spacing="xs" mt={8}>
         {lay.mode === "target_yplus" && (
           <NumField label="Target y+" value={lay.target_yplus} decimals={1} onCommit={(v) => patchConfig({ mesh: { layers: { target_yplus: v } } })} />
         )}
-        <NumField label="Expansion" value={lay.expansion_ratio} decimals={3} onCommit={(v) => patchConfig({ mesh: { layers: { expansion_ratio: v } } })} />
+        <NumField label="Growth ratio" value={lay.expansion_ratio} decimals={3} onCommit={(v) => patchConfig({ mesh: { layers: { expansion_ratio: v } } })} />
         <NumField label={lay.mode === "relative" ? "Layers" : "Layers (auto)"} value={lay.n_layers ?? ld?.n_layers} decimals={0}
           onCommit={(v) => patchConfig({ mesh: { layers: { n_layers: Math.round(v) } } })} />
         {lay.mode !== "none" && (
-          <NumField label="Final / surface cell" value={lay.final_relative} decimals={2} onCommit={(v) => patchConfig({ mesh: { layers: { final_relative: v } } })} />
+          <NumField label="Last layer / cell" value={lay.final_relative} decimals={2} onCommit={(v) => patchConfig({ mesh: { layers: { final_relative: v } } })} />
         )}
       </SimpleGrid>
       {ld && (
-        <Paper withBorder p="xs">
+        <div style={{ marginTop: 10 }}>
           <KeyValue
             rows={[
               ["First layer", `${fmt(ld.first_layer * 1000, 3)} mm`],
-              ["Layers × ratio", `${ld.n_layers} × ${fmt(ld.expansion_ratio, 2)}`],
-              ["Final layer", `${fmt(ld.final_layer * 1000, 2)} mm (${fmt(ld.final_relative, 2)}× cell)`],
+              ["Layers × growth", `${ld.n_layers} × ${fmt(ld.expansion_ratio, 2)}`],
+              ["Last layer", `${fmt(ld.final_layer * 1000, 2)} mm (${fmt(ld.final_relative, 2)} × cell)`],
               ["Total thickness", `${fmt(ld.total_thickness * 1000, 2)} mm`],
-              ["y+ estimate", fmt(ld.yplus_estimate, 1)],
+              ["Expected y+", fmt(ld.yplus_estimate, 1)],
             ]}
           />
-          <Text size="xs" c="dimmed" mt={4}>
-            {ld.assumptions}
-          </Text>
+          <Hint style={{ marginTop: 4 }}>{ld.assumptions}</Hint>
           {ld.warnings?.map((w: string, i: number) => (
-            <Alert key={i} color="yellow" variant="light" p={4} mt={4}>
-              <Text size="xs">{w}</Text>
-            </Alert>
+            <Hint key={i} style={{ color: "var(--ab-warn)", marginTop: 4 }}>
+              {w}
+            </Hint>
           ))}
-        </Paper>
+        </div>
       )}
+      {extra?.existing && extra.existing.status !== "completed" && (
+        <Hint style={{ marginTop: 10 }}>A mesh for these settings is {extra.existing.status}.</Hint>
+      )}
+    </>
+  );
 
-      <SectionTitle>Generate</SectionTitle>
-      <Group align="flex-end" gap="xs">
-        <NumberInput size="xs" w={90} label="Cores" min={1} max={256} value={cores} onChange={(v) => typeof v === "number" && setCores(v)} />
-        <Button size="xs" leftSection={<IconGridDots size={14} />} loading={busy} onClick={() => generate(false)} disabled={!plan}>
+  const footer = (
+    <Stack gap={8}>
+      <Group gap={8} align="flex-end" wrap="nowrap">
+        <NumberInput size="xs" w={78} label="Cores" min={1} max={256} value={cores} onChange={(v) => typeof v === "number" && setCores(v)} />
+        <Button style={{ flex: 1 }} leftSection={<IconGridDots size={15} />} loading={busy} onClick={() => generate(false)} disabled={!plan}>
           Generate mesh
         </Button>
-        <Tooltip label="Re-mesh even if an identical mesh exists">
-          <Button size="xs" variant="subtle" leftSection={<IconRefresh size={14} />} onClick={() => generate(true)}>
-            Force
+        <Tooltip label="Mesh again even if a mesh for these settings exists">
+          <Button variant="default" px={10} onClick={() => generate(true)} aria-label="Mesh again">
+            <IconRefresh size={15} />
           </Button>
         </Tooltip>
       </Group>
-      {project!.staleness.mesh.stale && (
-        <Alert color="orange" variant="light" p={6}>
-          <Text size="xs">The latest mesh no longer matches the current setup (geometry, tunnel or mesh settings changed). It is kept, but a new mesh is needed.</Text>
-        </Alert>
-      )}
-      {extra?.existing && (
-        <Text size="xs" c="dimmed">
-          Matching mesh: {extra.existing.id} ({extra.existing.status})
-        </Text>
-      )}
+      <Button variant="subtle" size="xs" onClick={() => setSection("physics")}>
+        Continue to physics
+      </Button>
     </Stack>
   );
 
   return (
-    <PageLayout side={side}>
-      <Paper withBorder radius="md" style={{ flex: 1, minHeight: 300, overflow: "hidden" }}>
-        <Viewport3D onReady={(v) => (viewer.current = v)} />
-      </Paper>
-      {current && (
-        <Paper withBorder radius="md" p="sm" style={{ maxHeight: "38%", overflow: "auto" }}>
-          <Group justify="space-between" mb={6}>
-            <Group gap="xs">
-              <Text fw={700} size="sm">
-                Mesh {current.id}
-              </Text>
-              <StatusBadge status={current.status} />
-              {current.cells && <Badge variant="light">{(current.cells / 1e6).toFixed(3)} M cells</Badge>}
-            </Group>
-            <Text size="xs" c="dimmed">
-              {current.provider} · OpenFOAM {current.foam_version}
-            </Text>
-          </Group>
-          {meshJob && !["completed", "failed"].includes(meshJob.status) && (
-            <Stack gap={4} mb="xs">
-              <Progress value={(100 * meshJob.step_index) / Math.max(1, meshJob.steps.length)} animated />
-              <Text size="xs" c="dimmed">
-                {meshJob.steps[meshJob.step_index]?.name} ({meshJob.step_index + 1}/{meshJob.steps.length})
-              </Text>
+    <PageLayout side={side} title="Mesh" lede="Set how fine the mesh is near the vehicle and in its wake, then generate it and inspect the cells." footer={footer}>
+      <Viewport3D onReady={(v) => (viewer.current = v)}>
+        <div className="ab-float" style={{ left: 12, top: 12, padding: 10, width: 258 }}>
+          <SegmentedControl size="xs" fullWidth value={mode} onChange={(v) => setMode(v as any)}
+            data={[{ value: "plan", label: "Planned" }, { value: "mesh", label: "Generated mesh", disabled: !viewable }]} />
+          {mode === "plan" && <Hint style={{ marginTop: 8 }}>Refinement boxes, coloured by level, inside the tunnel. {viewable ? "" : "Generate the mesh to inspect its cells."}</Hint>}
+          {mode === "mesh" && (
+            <Stack gap={8} mt={10}>
+              <SimpleGrid cols={2} spacing={6} verticalSpacing={6}>
+                <Checkbox size="xs" label="Vehicle surface" checked={show.vehicle} onChange={(e) => setShow({ ...show, vehicle: e.currentTarget.checked })} />
+                <Checkbox size="xs" label="Ground" checked={show.ground} onChange={(e) => setShow({ ...show, ground: e.currentTarget.checked })} />
+                <Checkbox size="xs" label="Refinement boxes" checked={show.boxes} onChange={(e) => setShow({ ...show, boxes: e.currentTarget.checked })} />
+                <Checkbox size="xs" label="Tunnel outline" checked={show.domain} onChange={(e) => setShow({ ...show, domain: e.currentTarget.checked })} />
+              </SimpleGrid>
+              <Switch size="xs" label="Wireframe only" checked={show.wireframe} onChange={(e) => setShow({ ...show, wireframe: e.currentTarget.checked })} />
+              <div>
+                <Text size="xs" c="dimmed" fw={500} mb={4}>
+                  Cut through the volume
+                </Text>
+                <SegmentedControl size="xs" fullWidth value={cut} onChange={(v) => chooseCut(v as Cut)}
+                  data={[{ value: "off", label: "None" }, { value: "y", label: "Lengthwise" }, { value: "x", label: "Across" }, { value: "z", label: "Level" }]} />
+              </div>
+              {cut !== "off" && span && (
+                <div>
+                  <Group justify="space-between" mb={2}>
+                    <Text size="xs" c="dimmed">
+                      Position ({cut})
+                    </Text>
+                    <Text size="xs" className="num">
+                      {fmt(cutPos[cut], 3)} m
+                    </Text>
+                  </Group>
+                  <Slider size="sm" min={span[0]} max={span[1]} step={(span[1] - span[0]) / 400} value={cutPos[cut] ?? 0} label={null}
+                    onChange={(x) => setCutPos((p) => ({ ...p, [cut]: x }))} />
+                </div>
+              )}
             </Stack>
           )}
-          <SimpleGrid cols={{ base: 1, lg: 3 }} spacing="sm">
-            <div>
-              <Text size="xs" fw={700} mb={4}>
-                Quality (checkMesh)
-              </Text>
-              {q ? (
-                <KeyValue
-                  rows={[
-                    ["Cells", q.cells?.toLocaleString()],
-                    ["Max non-orthogonality", `${fmt(q.max_non_ortho, 1)}° (avg ${fmt(q.avg_non_ortho, 1)}°)`],
-                    ["Max skewness", fmt(q.max_skewness, 2)],
-                    ["Max aspect ratio", fmt(q.max_aspect_ratio, 1)],
-                    ["Failed checks", q.failed_checks],
-                    ["Regions", q.n_regions],
-                  ]}
-                />
-              ) : (
-                <Text size="xs" c="dimmed">
-                  Not available yet.
-                </Text>
-              )}
-            </div>
-            <div>
-              <Text size="xs" fw={700} mb={4}>
-                Layer coverage {current.snappy?.overall_layer_coverage != null && `— ${(current.snappy.overall_layer_coverage * 100).toFixed(0)}% overall`}
-              </Text>
-              <Table className="compact">
-                <Table.Tbody>
-                  {coverage.map((l: any) => (
-                    <Table.Tr key={l.patch}>
-                      <Table.Td>
-                        <Text size="xs" className="mono">
-                          {l.patch}
-                        </Text>
-                      </Table.Td>
-                      <Table.Td w={120}>
-                        <Progress value={Math.min(100, l.coverage * 100)} color={l.coverage > 0.7 ? "teal" : l.coverage > 0.4 ? "yellow" : "red"} />
-                      </Table.Td>
-                      <Table.Td>
-                        <Text size="xs">
-                          {fmt(l.mesh_layers, 2)}/{l.target_layers}
-                        </Text>
-                      </Table.Td>
-                    </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-            </div>
-            <div>
-              <Text size="xs" fw={700} mb={4}>
-                Findings
-              </Text>
-              <DiagnosticList items={(current.diagnostics || []).filter((d: any) => typeof d === "object")} empty="No mesh problems detected." />
-            </div>
-          </SimpleGrid>
-          {meshes.length > 1 && (
-            <Text size="xs" c="dimmed" mt="xs">
-              {meshes.length} meshes in this project; earlier meshes are kept for the runs that used them.
-            </Text>
-          )}
-        </Paper>
-      )}
+        </div>
+        {(layerBusy || (mode === "mesh" && opening)) && (
+          <div className="ab-viewport-note" style={{ left: "auto", right: 12, top: 56 }}>
+            <Loader size={12} color="ice" />
+            {opening ? "Opening the mesh…" : layerBusy}
+          </div>
+        )}
+        {mode === "mesh" && cut !== "off" && view?.plan && <LevelLegend levels={levels} base={view.plan.base_cell} />}
+        {mode === "mesh" && current?.cells && (
+          <div className="ab-float" style={{ right: 12, bottom: 12, padding: "6px 10px" }}>
+            <StatusDot tone={current.status === "completed" ? "ok" : "warn"} label={`${(current.cells / 1e6).toFixed(2)} M cells`} />
+          </div>
+        )}
+      </Viewport3D>
     </PageLayout>
   );
 }

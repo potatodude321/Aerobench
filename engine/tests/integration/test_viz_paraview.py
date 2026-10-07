@@ -96,5 +96,5 @@ def test_mesh_viewer_on_the_generated_mesh(solved, viz):
     assert 0 in levels and max(levels) >= 3, levels
     assert hdr["n_cells"] > 200 and a["edges"].max() < hdr["n_points"]
     # all cut points lie in the plane
-    assert np.allclose(a["positions"].reshape(-1, 3)[:, 1], y0, atol=1e-4)
+    assert np.allclose(a["positions"].reshape(-1, 3)[:, 1], y0, atol=2e-4)
     assert viz.mesh_extract(p, mesh_id, "mesh_slice", {"origin": [2.0, y0, 0.5], "normal": [0, 1, 0]})["cached"]

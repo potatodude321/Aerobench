@@ -68,6 +68,38 @@ def test_graceful_stop_then_resume(solved, ctx):
     row = run_record(p, run_id)
     assert row["status"] == "stopped"
 
+    # a stopped parallel run is not reconstructed: its results live in processor*/ only.
+    # Visualisation must read them (not the initial conditions in 0/).
+    from aerobench.viz.detect import detect_paraview
+
+    if detect_paraview().get("available"):
+        import numpy as np
+
+        from aerobench.services.viz import VizService
+        from aerobench.viz.payload import unpack
+
+        viz = VizService(ctx)
+        try:
+            presets = {pr["id"]: pr for pr in viz.presets(p, run_id)}
+            for pid in ("cp_body", "centreline_cp"):
+                out = viz.extract(p, run_id, presets[pid]["op"], presets[pid]["params"])
+                hdr, arrays = unpack(viz.payload_path(p, run_id, out["key"]).read_bytes())
+                s = arrays["scalars"]
+                assert np.isfinite(s).mean() > 0.99, pid
+                assert np.nanmax(s) - np.nanmin(s) > 0.3, f"{pid}: uniform field (initial conditions read?)"
+                assert hdr["time"] >= written[-1], hdr["time"]
+            # "Open in ParaView" script: opens the decomposed results at the stopped time
+            import subprocess
+
+            script = viz.paraview_gui_script(p, run_id)
+            check = script.read_text() + "\nprint('PVTIME', scene.AnimationTime, r.CaseType)\n"
+            pvpy = detect_paraview()["pvpython"]
+            out = subprocess.run([pvpy, "--force-offscreen-rendering", "-c", check], capture_output=True, text=True, timeout=300)
+            assert f"PVTIME {float(written[-1])} 'Decomposed Case'" in out.stdout, out.stdout[-500:] + out.stderr[-1500:]
+            assert "Could not determine array range" not in out.stdout + out.stderr
+        finally:
+            viz.close()
+
     # resume: continue to (configured 3000 would take too long) -> use a modest extension by
     # shrinking the target through extra_iterations relative to the stopped state
     out = resume_run(p, ctx, run_id, extra_iterations=written[-1] + 20 - 3000)

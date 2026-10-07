@@ -139,8 +139,9 @@ class Session:
         self.l_ref = 1.0
         self._patches = None
 
-    def _new_reader(self, foam_file):
+    def _new_reader(self, foam_file, case_type):
         r = OpenFOAMReader(FileName=foam_file)
+        r.CaseType = case_type
         r.UpdatePipelineInformation()
         r.Createcelltopointfiltereddata = 1
         return r
@@ -150,8 +151,9 @@ class Session:
             if r is not None:
                 Delete(r)
         self.case = foam_file
-        self.surf_reader = self._new_reader(foam_file)
-        self.vol_reader = self._new_reader(foam_file)
+        self.case_type = case_type(foam_file)
+        self.surf_reader = self._new_reader(foam_file, self.case_type)
+        self.vol_reader = self._new_reader(foam_file, self.case_type)
         self.vol_reader.MeshRegions = ["internalMesh"]
         self._patches = None
         r = self.surf_reader
@@ -161,6 +163,7 @@ class Session:
         self.time = times[-1] if times else 0.0
         return {
             "times": times,
+            "case_type": self.case_type,
             "regions": list(r.GetProperty("MeshRegions").Available),
             "cell_arrays": list(r.CellArrays.Available),
             "point_arrays": list(r.PointArrays.Available) if hasattr(r, "PointArrays") else [],
@@ -178,6 +181,31 @@ class Session:
 
 
 S = Session()
+
+
+def _time_dirs(d):
+    out = []
+    try:
+        for name in os.listdir(d):
+            try:
+                out.append(float(name))
+            except ValueError:
+                pass
+    except OSError:
+        pass
+    return out
+
+
+def case_type(foam_file):
+    """'Decomposed Case' when the newest results exist only in processor*/ — a parallel run
+    that was stopped, killed or interrupted before reconstructPar — otherwise 'Reconstructed
+    Case'. Reading the root case in that situation would show the initial conditions (0/)."""
+    case = os.path.dirname(os.path.abspath(foam_file))
+    root = [t for t in _time_dirs(case) if t > 0]
+    proc = [t for t in _time_dirs(os.path.join(case, "processor0")) if t > 0]
+    if proc and (not root or max(proc) > max(root)):
+        return "Decomposed Case"
+    return "Reconstructed Case"
 
 
 # ------------------------------------------------------------------------------ helpers

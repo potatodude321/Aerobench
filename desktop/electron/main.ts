@@ -136,7 +136,9 @@ function registerIpc(): void {
   ipcMain.handle("shell:showItem", (_e, p: string) => shell.showItemInFolder(p));
   ipcMain.handle("paraview:open", (_e, exe: string, file: string) => {
     if (!exe || !fs.existsSync(exe)) return { ok: false, error: "ParaView executable not found" };
-    const child = spawn(exe, [`--data=${file}`], { detached: true, stdio: "ignore", windowsHide: false });
+    // a generated state script (opens decomposed results at the latest time) or a data file
+    const arg = file.toLowerCase().endsWith(".py") ? `--script=${file}` : `--data=${file}`;
+    const child = spawn(exe, [arg], { detached: true, stdio: "ignore", windowsHide: false });
     child.unref();
     return { ok: true };
   });

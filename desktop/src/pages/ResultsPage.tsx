@@ -166,7 +166,13 @@ export function ResultsPage() {
   const openInParaView = async () => {
     if (!bridge || !run) return;
     const exe = vizStatus?.paraview;
-    const res = await bridge.openParaView(exe, `${project!.root}/${run.path}/case.foam`);
+    let target = `${project!.root}/${run.path}/case.foam`;
+    try {
+      target = (await api.post(`/api/p/${pid()}/runs/${run.id}/viz/paraview-gui`)).script;
+    } catch {
+      /* fall back to opening the case file directly */
+    }
+    const res = await bridge.openParaView(exe, target);
     if (!res.ok) notifyError(new Error(res.error));
     else notifyOk("ParaView opened with this case.");
   };

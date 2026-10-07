@@ -93,6 +93,12 @@ def image(pid: str, run_id: str, name: str, e: EngineState = Depends(engine)):
     return FileResponse(p.cache_dir("images", run_id) / name, media_type="image/png")
 
 
+@router.post("/runs/{run_id}/viz/paraview-gui")
+def paraview_gui(pid: str, run_id: str, e: EngineState = Depends(engine)):
+    p = e.projects.get(pid)
+    return {"script": str(e.viz.paraview_gui_script(p, run_id))}
+
+
 @router.get("/runs/{run_id}/viz/script")
 def script(pid: str, run_id: str, presets: str = "cp_body", e: EngineState = Depends(engine)):
     return PlainTextResponse(e.viz.expert_script(e.projects.get(pid), run_id, presets.split(",")))

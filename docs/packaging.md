@@ -44,18 +44,25 @@ What the script does:
 
 ### What the setup does on the user's machine
 
-1. Copies the application (≈3.5 GB installed).
-2. Recreates ParaView's duplicate DLLs as NTFS hard links (`resources\tools\restore_links.py`
+1. Copies the application (≈3.5 GB installed; the installer unpacks to a temporary folder
+   first, so about 7 GB must be free during installation).
+2. Precompiles the Python modules of the engine and of ParaView (`compileall`). The
+   installation folder is read-only for normal users, so without this every start would
+   recompile them in memory and the application would start noticeably slower.
+3. Recreates ParaView's duplicate DLLs as NTFS hard links (`resources\tools\restore_links.py`
    run with the embedded Python; copies where hard links are impossible). Idempotent, so a
    repair install fixes a damaged tree.
-3. Installs Microsoft MPI 10.1.3 silently (`msmpisetup.exe -unattend`) unless an MS-MPI is
+4. Installs Microsoft MPI 10.1.3 silently (`msmpisetup.exe -unattend`) unless an MS-MPI is
    already installed. Failure is reported; the app then offers *Install Microsoft MPI*.
-4. The uninstaller removes the application folder; Microsoft MPI stays (shared component).
+5. The uninstaller removes the application folder; Microsoft MPI stays (shared component).
 
 Silent installation for IT deployment: `AeroBench-Setup-<version>.exe /S [/D=C:\Path]`.
 
 The installer can also be cross-built on Linux with Wine (32- and 64-bit) installed:
 `python3 packaging/prepare_python.py && cd desktop && npm run build && npx electron-builder --win nsis --x64`.
+To try the setup under Wine, give it a display and enough disk space:
+`xvfb-run -a wine release/AeroBench-Setup-<version>.exe /S` (without a display it waits
+forever; without about 7 GB free it stops with exit code 2).
 
 ### Bundled applications and updates
 

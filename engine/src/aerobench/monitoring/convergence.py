@@ -49,7 +49,7 @@ class CoefficientStats:
     min: float
     max: float
     last: float
-    state: str  # stable | bounded_oscillation | drifting | unknown
+    state: str  # stable | bounded_oscillation | oscillating | drifting | unknown
 
 
 @dataclass
@@ -89,8 +89,11 @@ def coefficient_stats(t: np.ndarray, y: np.ndarray, metric: str) -> CoefficientS
         state = "stable"
     elif std <= bt and abs(drift) <= bd:
         state = "bounded_oscillation"
+    elif abs(drift) > bd:
+        state = "drifting"  # a trend: more iterations may settle it
     else:
-        state = "drifting"
+        state = "oscillating"  # no trend but a large swing: typically unsteady separated flow
+
     return CoefficientStats(float(np.mean(y)), std, drift, float(y.min()), float(y.max()), float(y[-1]), state)
 
 
@@ -173,7 +176,16 @@ def assess(
     else:
         a.status = "not_converged"
         drifting = [m for m, c in a.coefficients.items() if c.state == "drifting"]
-        a.summary = f"Still drifting: {', '.join(drifting)}. Run more iterations or check the mesh."
+        swinging = [m for m, c in a.coefficients.items() if c.state == "oscillating"]
+        parts = []
+        if drifting:
+            parts.append(f"Still drifting: {', '.join(drifting)} — run more iterations or check the mesh.")
+        if swinging:
+            amp = ", ".join(f"{m} ±{a.coefficients[m].std:.3f}" for m in swinging)
+            parts.append(f"Large oscillation without a trend: {amp} (standard deviation over the window). This usually means "
+                         "unsteady separated flow that steady RANS cannot settle; more iterations will not help — use the "
+                         "window average with care, refine the separation region or use a transient method.")
+        a.summary = " ".join(parts) or "Convergence criteria not met."
     if expected_iterations and a.iterations < expected_iterations and a.status != "diverged":
         a.summary += f" (stopped at {a.iterations} of {expected_iterations} iterations)"
     return a

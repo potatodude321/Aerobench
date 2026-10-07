@@ -38,7 +38,9 @@ every assessment):
   at least 50 iterations); reported coefficients are window means with the last-iteration
   values alongside.
 * Status values: `converged`, `converged_oscillating` (criteria met within the bounded
-  band), `not_converged` (with the drifting quantities named), `diverged` (NaN, exploding
+  band), `not_converged` (naming the quantities that still *drift* — more iterations may help —
+  and those that *oscillate* beyond the bounded band without a trend — typical of unsteady
+  separation, which more iterations do not fix), `diverged` (NaN, exploding
   residuals or absurd coefficients), `insufficient_data` (fewer than 100 iterations).
 * Unconverged runs are labelled in every table, chart and report; studies can be told to
   treat them as failures.

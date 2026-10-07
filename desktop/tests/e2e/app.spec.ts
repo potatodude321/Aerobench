@@ -40,9 +40,18 @@ test("create, import, close and reopen a project", async () => {
     await expect(win.getByText("wheel_FL").first()).toBeVisible();
 
     if (process.env.AEROBENCH_E2E_SOLVE === "1") {
+      // a quick but complete pipeline: fast mesh preset, short solve
+      test.setTimeout(45 * 60_000);
+      await win.locator('nav >> text="Mesh"').click();
+      await win.getByText("Fast", { exact: true }).first().click();
+      await expect(win.getByText("Estimated cells")).toBeVisible();
+      await win.locator('nav >> text="Physics"').click();
+      const iterations = win.getByRole("textbox", { name: "Iterations", exact: true });
+      await iterations.fill("300");
+      await iterations.press("Enter");
       await win.locator('nav >> text="Run"').click();
       await win.getByRole("button", { name: "Run simulation" }).click();
-      await expect(win.getByText("COMPLETED").first()).toBeVisible({ timeout: 14 * 60_000 });
+      await expect(win.getByText("COMPLETED").first()).toBeVisible({ timeout: 40 * 60_000 });
     }
 
     await win.locator('nav >> text="Project"').click();

@@ -189,7 +189,10 @@ def metrics_dict(res: AeroResult) -> dict[str, Optional[float]]:
         "roll_Nm": res.roll,
         "CdA": res.cda,
         "ClA": res.cla,
-        "balance_front_pct": res.balance_front_pct,
+        # An ill-conditioned balance (net lift, or downforce small against the axle loads)
+        # is not a number anyone should compare, sort or optimise: it is reported as missing
+        # (the AeroResult keeps the raw ratio and the flag for diagnostics).
+        "balance_front_pct": None if res.balance_ill_conditioned else res.balance_front_pct,
         "efficiency": res.efficiency,
     }
 
@@ -214,6 +217,7 @@ METRIC_INFO: dict[str, dict[str, str]] = {
     "roll_Nm": {"label": "Rolling moment", "units": "N·m", "sign": "+ right side down"},
     "CdA": {"label": "Drag area", "units": "m²", "sign": ""},
     "ClA": {"label": "Lift area", "units": "m²", "sign": "+ up"},
-    "balance_front_pct": {"label": "Aero balance (front)", "units": "%", "sign": "front DF / total DF"},
+    "balance_front_pct": {"label": "Aero balance (front)", "units": "%",
+                          "sign": "front DF / total DF; undefined (missing) when the vehicle makes net lift or near-zero downforce"},
     "efficiency": {"label": "Downforce / drag", "units": "-", "sign": ""},
 }

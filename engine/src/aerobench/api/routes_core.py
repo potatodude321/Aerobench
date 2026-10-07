@@ -113,6 +113,8 @@ def create_project(body: CreateProject, e: EngineState = Depends(engine)):
         root = Path(body.parent) / project_folder_name(body.name)
     else:
         raise AeroBenchError.make("project.path_missing", ErrorCategory.PROJECT, "No folder was given for the new project.")
+    if cfg.execution.n_procs == 1:  # templates may pin a count; otherwise use the machine
+        cfg.execution.n_procs = e.ctx.default_cores(root)
     p = Project.create(root, body.name, cfg)
     e.projects.add(p)
     e.ctx.settings.add_recent(str(p.root))

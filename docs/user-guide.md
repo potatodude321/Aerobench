@@ -61,7 +61,7 @@ current state and ends cleanly; *Resume* continues from it.
 
 ## 6. Results and comparison
 
-* Key numbers: Cd, Cl, front/rear downforce, aero balance (flagged when ill-conditioned),
+* Key numbers: Cd, Cl, front/rear downforce, aero balance (shown as undefined when the vehicle makes net lift or near-zero downforce),
   side force and moments, CdA — with their sign conventions. Per-component forces, drag
   split into pressure and friction, y+ statistics.
 * **Visualise**: Cp/y+/wall-shear maps, centreline and wake planes, underfloor, wheel wakes,

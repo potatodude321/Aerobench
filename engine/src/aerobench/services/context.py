@@ -46,6 +46,19 @@ class AppContext:
     def max_cores(self) -> int:
         return max(1, min(self.settings.max_cores or usable_cores(), usable_cores() * 2))
 
+    def default_cores(self, project_root=None) -> int:
+        """Cores a new project starts with: the physical cores (within the user's limit),
+        unless the default provider cannot run this location in parallel (e.g. a path with
+        spaces on Linux), in which case serial — never a default that fails on first run."""
+        n = max(1, min(self.max_cores(), usable_cores()))
+        if n > 1 and project_root is not None:
+            try:
+                if self.provider().check_case(project_root, n):
+                    return 1
+            except AeroBenchError:
+                pass
+        return n
+
     def hardware(self) -> dict[str, Any]:
         return hardware_info()
 

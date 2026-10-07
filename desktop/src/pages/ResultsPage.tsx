@@ -203,7 +203,7 @@ export function ResultsPage() {
           <Kpi label="Rear downforce" value={m.downforce_rear_N} units="N" digits={1} sub={`Cl rear ${fmt(m.Cl_rear, 4)}`} />
           <Kpi label="Aero balance (front)" value={m.balance_front_pct} units="%" digits={1}
             color={res.balance_ill_conditioned ? "yellow" : undefined}
-            sub={res.balance_ill_conditioned ? "ill-conditioned: net lift" : "front DF / total DF"} />
+            sub={res.balance_ill_conditioned ? "undefined: net lift or near-zero downforce" : "front DF / total DF"} />
           <Kpi label="Side force Cs" value={m.Cs} digits={4} sub={`Yaw moment ${fmt(m.yaw_Nm, 1)} N·m`} />
         </SimpleGrid>
       )}

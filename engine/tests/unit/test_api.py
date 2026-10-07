@@ -147,3 +147,19 @@ def test_path_traversal_is_rejected(client, tmp_path):
         assert "FoamFile" not in r.text and "project_id" not in r.text
     r = client.get(f"/api/p/{pid}/runs/run-1/viz/image/evil.txt")
     assert r.status_code == 400
+
+
+def test_new_projects_default_to_the_machine_cores(client, tmp_path, monkeypatch):
+    from aerobench.execution import registry
+    from aerobench.services import context
+
+    monkeypatch.setattr(context, "usable_cores", lambda: 6)
+    monkeypatch.setattr(registry, "usable_cores", lambda: 6)
+    r = client.post("/api/projects", json={"path": str(tmp_path / "Cores"), "name": "Cores"})
+    assert r.status_code == 200, r.text
+    assert r.json()["config"]["execution"]["n_procs"] == 6
+    # Linux cannot run a path with spaces in parallel: such a project starts serial instead
+    # of failing on its first run
+    r = client.post("/api/projects", json={"path": str(tmp_path / "With space" / "P"), "name": "Spaced"})
+    expected = 1 if client.app.state.engine.ctx.provider().kind == "local-posix" else 6
+    assert r.json()["config"]["execution"]["n_procs"] == expected

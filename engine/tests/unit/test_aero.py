@@ -94,6 +94,19 @@ def test_front_biased_downforce_gives_front_balance():
     assert res.balance_front_pct == pytest.approx(100.0)
 
 
+def test_ill_conditioned_balance_is_missing_in_metrics():
+    from aerobench.aero.forces import metrics_dict
+
+    # net lift: front lifts, rear presses down slightly -> a "balance" of hundreds of percent
+    F = np.array([0.0, 0.0, 100.0])
+    M = np.cross(np.array([-1.25, 0.0, 0.0]), np.array([0.0, 0.0, 300.0]))
+    res = reduce_forces(F, M, (0, 0, 0), _ref())
+    assert res.balance_ill_conditioned
+    assert metrics_dict(res)["balance_front_pct"] is None
+    ok = reduce_forces(np.array([0.0, 0.0, -1000.0]), np.zeros(3), (0, 0, 0), _ref())
+    assert metrics_dict(ok)["balance_front_pct"] == pytest.approx(50.0)
+
+
 def test_drag_at_height_produces_nose_up_moment_about_ground_and_rear_unloading():
     # Drag (+x, rearward) acting at height h above the ground reference: tends to pitch the
     # nose UP (top pushed rearward) => front axle unloaded (positive lift on front).

@@ -44,7 +44,11 @@ vehicle centreline. With wheelbase `WB` and PM (nose-up) about that point:
 
 Aero balance (front, %) = `DF_front / (DF_front + DF_rear) × 100`, `DF = −L`.
 The balance is flagged *ill-conditioned* when total downforce ≤ 0 or when
-`|DF_total| < 0.05 (|DF_front| + |DF_rear|)`; it is still shown but marked.
+`|DF_total| < 0.05 (|DF_front| + |DF_rear|)`. An ill-conditioned balance is reported as
+*missing* (with the reason) everywhere a value would be compared, sorted, charted or
+optimised — results, comparisons, studies, reports and CSV — because a ratio over a
+near-zero or negative total (e.g. "231 % front") carries no engineering meaning. Front and
+rear downforce remain available.
 
 ## Yaw
 

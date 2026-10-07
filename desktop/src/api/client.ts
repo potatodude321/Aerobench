@@ -67,27 +67,56 @@ async function handle<T>(r: Response): Promise<T> {
   throw new EngineError(r.status, diag);
 }
 
+/**
+ * Mutations are applied strictly in the order the user made them.  A field commits on blur,
+ * which fires on mouse-down of the next click: an edit and a "Run simulation" click therefore
+ * leave together, and without ordering the engine could snapshot the configuration before the
+ * edit lands.  Each mutation waits for the previous one to finish (success or failure).
+ * Read-only POSTs (previews, comparisons, ParaView renders, report generation, exports) are
+ * not queued, so a slow render never delays an edit.
+ */
+const UNQUEUED = [/\/preview(\.abg)?$/, /\/compare$/, /\/viz\//, /\/reports$/, /\/geometry\/export$/];
+let mutationChain: Promise<unknown> = Promise.resolve();
+
+export function ordered<T>(path: string, fn: () => Promise<T>): Promise<T> {
+  if (UNQUEUED.some((re) => re.test(path))) return fn();
+  const run = mutationChain.then(fn, fn);
+  mutationChain = run.catch(() => undefined);
+  return run;
+}
+
+/** Resolves when every mutation issued so far has been applied. */
+export function settled(): Promise<void> {
+  return mutationChain.then(() => undefined);
+}
+
 export const api = {
   async get<T = any>(path: string): Promise<T> {
     return handle<T>(await fetch(engineUrl(path), { headers: headers() }));
   },
-  async post<T = any>(path: string, body?: unknown): Promise<T> {
-    return handle<T>(
-      await fetch(engineUrl(path), {
-        method: "POST",
-        headers: headers({ "Content-Type": "application/json" }),
-        body: body === undefined ? undefined : JSON.stringify(body),
-      }),
+  post<T = any>(path: string, body?: unknown): Promise<T> {
+    return ordered(path, async () =>
+      handle<T>(
+        await fetch(engineUrl(path), {
+          method: "POST",
+          headers: headers({ "Content-Type": "application/json" }),
+          body: body === undefined ? undefined : JSON.stringify(body),
+        }),
+      ),
     );
   },
-  async patch<T = any>(path: string, body: unknown): Promise<T> {
-    return handle<T>(
-      await fetch(engineUrl(path), { method: "PATCH", headers: headers({ "Content-Type": "application/json" }), body: JSON.stringify(body) }),
+  patch<T = any>(path: string, body: unknown): Promise<T> {
+    return ordered(path, async () =>
+      handle<T>(
+        await fetch(engineUrl(path), { method: "PATCH", headers: headers({ "Content-Type": "application/json" }), body: JSON.stringify(body) }),
+      ),
     );
   },
-  async put<T = any>(path: string, body: unknown): Promise<T> {
-    return handle<T>(
-      await fetch(engineUrl(path), { method: "PUT", headers: headers({ "Content-Type": "application/json" }), body: JSON.stringify(body) }),
+  put<T = any>(path: string, body: unknown): Promise<T> {
+    return ordered(path, async () =>
+      handle<T>(
+        await fetch(engineUrl(path), { method: "PUT", headers: headers({ "Content-Type": "application/json" }), body: JSON.stringify(body) }),
+      ),
     );
   },
   async binary(path: string): Promise<ArrayBuffer> {
@@ -100,11 +129,11 @@ export const api = {
     if (!r.ok) await handle(r);
     return r.arrayBuffer();
   },
-  async upload<T = any>(path: string, file: File, fields: Record<string, string> = {}): Promise<T> {
+  upload<T = any>(path: string, file: File, fields: Record<string, string> = {}): Promise<T> {
     const fd = new FormData();
     fd.append("file", file);
     for (const [k, v] of Object.entries(fields)) fd.append(k, v);
-    return handle<T>(await fetch(engineUrl(path), { method: "POST", headers: headers(), body: fd }));
+    return ordered(path, async () => handle<T>(await fetch(engineUrl(path), { method: "POST", headers: headers(), body: fd })));
   },
   imageUrl(path: string): string {
     // <img> cannot send headers: pass the token as a query parameter (localhost only)

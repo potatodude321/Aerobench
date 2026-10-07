@@ -122,6 +122,7 @@ def main() -> int:
     ap.add_argument("--site-packages", required=True)
     ap.add_argument("--node-modules", required=True)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--bundle", default=None, help="packaging/build/bundle (bundled applications) if present")
     a = ap.parse_args()
     py = python_packages(Path(a.site_packages))
     native = native_libraries(Path(a.site_packages))
@@ -129,7 +130,27 @@ def main() -> int:
     unknown = [f"{p['name']} {p['version']}" for p in py + js if not p["license"] and not p["texts"]]
     unknown += [f"native library {n['name']} (in {n['bundled_in']})" for n in native if not n["license"]]
     lines = ["THIRD-PARTY SOFTWARE LICENCES", "=" * 30, ""]
-    lines += ["OpenFOAM, ParaView, Microsoft MPI and Gmsh are not included; they are installed separately by the user.", ""]
+    bundle = Path(a.bundle) if a.bundle and (Path(a.bundle) / "bundle.json").is_file() else None
+    if bundle is not None:
+        comp = json.loads((bundle / "bundle.json").read_text(encoding="utf-8")).get("components", {})
+        lines += ["Bundled applications (separate programs, run as external processes)",
+                  "-------------------------------------------------------------------"]
+        if "openfoam" in comp:
+            lines += [f"OpenFOAM {comp['openfoam']['version']} for Windows (OpenCFD Ltd) — GPL-3.0-or-later. Unmodified binaries; "
+                      "licence text in resources\\licenses\\OpenFOAM\\GPL-3.0.txt. Source code: see resources\\licenses\\SOURCE-OFFER.txt."]
+        if "paraview" in comp:
+            lines += [f"ParaView {comp['paraview']['version']} (Kitware) — BSD-3-Clause; the licences of ParaView and every library it "
+                      f"bundles (including Qt 6, LGPL-3.0) are in resources\\{comp['paraview']['path']}\\share\\licenses."]
+        if "msmpi" in comp:
+            lines += [f"Microsoft MPI {comp['msmpi']['version']} redistributable installer — MIT licence "
+                      "(resources\\licenses\\MS-MPI); installed system-wide by the setup."]
+        lines.append("")
+        for rel in ("licenses/SOURCE-OFFER.txt", "licenses/MS-MPI/LICENSE.txt", "licenses/MS-MPI/COPYRIGHT-mpich.txt", "licenses/OpenFOAM/GPL-3.0.txt"):
+            f = bundle / rel
+            if f.is_file():
+                lines += ["=" * 78, rel, "=" * 78, f.read_text(encoding="utf-8", errors="replace").strip(), ""]
+    else:
+        lines += ["OpenFOAM, ParaView, Microsoft MPI and Gmsh are not included; they are installed separately by the user.", ""]
     if unknown:
         lines += ["LICENCE NOT DETERMINED (review before release):"] + [f"  - {u}" for u in unknown] + [""]
     for title, pkgs in (("Python runtime packages", py), ("Desktop (JavaScript) packages", js)):

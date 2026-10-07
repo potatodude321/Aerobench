@@ -13,9 +13,14 @@ PRIMARY = (6, 2)
 
 
 def _candidates() -> list[str]:
+    from .. import bundle
+
     c: list[str] = []
     if os.environ.get("AEROBENCH_PVPYTHON"):
         c.append(os.environ["AEROBENCH_PVPYTHON"])
+    bundled = bundle.pvpython()
+    if bundled is not None:
+        c.append(str(bundled))
     if os.name == "nt":
         for base in (os.environ.get("ProgramFiles", r"C:\Program Files"), os.environ.get("LOCALAPPDATA", "")):
             c += sorted(glob.glob(os.path.join(base, "ParaView*", "bin", "pvpython.exe")), reverse=True)
@@ -51,14 +56,19 @@ def detect_paraview(configured: Optional[str] = None, probe: bool = False) -> di
     if not cands:
         return {"available": False, "pvpython": None, "version": None, "status": "missing",
                 "message": "ParaView was not found. Install ParaView 6.2 from paraview.org (or set its path in Settings)."}
-    best = None
-    for p in cands:
+    # first candidate on the validated version wins; otherwise the first supported one; otherwise
+    # the first found (the user's explicit setting and the bundled copy come first)
+    seen = []
+    for p in dict.fromkeys(cands):
         v = _version_from_path(p)
         if v is None and probe:
             v = probe_version(p)
-        best = (p, v)
-        if v and v[:2] == PRIMARY:
-            break
+        seen.append((p, v))
+    if configured and os.path.exists(configured):
+        best = seen[0]  # an explicit choice in Settings always wins
+    else:
+        best = next((s for s in seen if s[1] and s[1][:2] == PRIMARY), None) \
+            or next((s for s in seen if s[1] and (s[1][0] > 5 or (s[1][0] == 5 and s[1][1] >= 12))), None) or seen[0]
     p, v = best
     status, msg = "ok", ""
     if v is None:
@@ -72,5 +82,9 @@ def detect_paraview(configured: Optional[str] = None, probe: bool = False) -> di
     for name in ("paraview.exe", "paraview"):
         if (exe_dir / name).exists():
             gui = str(exe_dir / name)
+    from .. import bundle
+
+    bundled = bundle.pvpython()
     return {"available": status != "unsupported", "pvpython": p, "paraview": gui,
+            "bundled": bool(bundled and os.path.normcase(str(bundled)) == os.path.normcase(p)),
             "version": ".".join(map(str, v)) if v else None, "status": status, "message": msg, "candidates": cands}

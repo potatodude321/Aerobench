@@ -15,5 +15,6 @@ contextBridge.exposeInMainWorld("aerobench", {
   openParaView: (exe: string, file: string) => ipcRenderer.invoke("paraview:open", exe, file),
   printToPDF: (url: string, outPath: string) => ipcRenderer.invoke("pdf:fromUrl", url, outPath),
   versions: () => ipcRenderer.invoke("app:versions"),
+  installMsmpi: () => ipcRenderer.invoke("msmpi:install"),
   onEngineExit: (cb: (info: { code: number; log: string[] }) => void) => ipcRenderer.on("engine:exited", (_e, info) => cb(info)),
 });

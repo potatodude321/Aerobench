@@ -100,8 +100,11 @@ def main() -> int:
         stray.unlink()
 
     # licences
-    run([sys.executable, str(ROOT / "packaging" / "licenses.py"), "--site-packages", str(site), "--node-modules",
-         str(ROOT / "desktop" / "node_modules"), "--out", str(out / "THIRD-PARTY-LICENSES.txt")])
+    lic_cmd = [sys.executable, str(ROOT / "packaging" / "licenses.py"), "--site-packages", str(site), "--node-modules",
+               str(ROOT / "desktop" / "node_modules"), "--out", str(out / "THIRD-PARTY-LICENSES.txt")]
+    if (out / "bundle" / "bundle.json").is_file():  # run prepare_thirdparty.py first
+        lic_cmd += ["--bundle", str(out / "bundle")]
+    run(lic_cmd)
     print(f"embedded runtime ready in {py_dir}")
     return 0
 

@@ -2,18 +2,22 @@
 
 ## 1. Install (Windows 10/11, 64-bit)
 
-1. **OpenFOAM v2606 for Windows** — download `OpenFOAM-v2606-windows-mingw.exe` from
-   openfoam.com (*Download → Windows*) and run it. It installs per user under
-   `%APPDATA%\Keysight-OpenCFD\OpenFOAM\v2606`.
-2. **Microsoft MPI 10.x** — required by the Windows OpenFOAM build even for single-core runs.
-   Install `msmpisetup.exe` (shipped in the OpenFOAM installer's third-party folder or from
-   Microsoft's download centre).
-3. **ParaView 6.2** (recommended) — for field visualisation and report images.
-4. **AeroBench** — run the installer. On first start the *Environment* card shows what was
-   found (solver, MPI, ParaView, CAD import, cores, memory) and links to anything missing.
+Run `AeroBench-Setup-<version>.exe` and accept the administrator prompt. That is all: the
+setup installs everything the application needs.
 
-Alternatives: OpenFOAM inside WSL2 (select the WSL solver environment in Settings) or a
-Linux workstation with `openfoam2606` installed.
+| Included | What it is for |
+|---|---|
+| OpenFOAM v2606 for Windows (OpenCFD) | meshing and solving |
+| Microsoft MPI 10.1.3 | needed by every OpenFOAM program of the Windows build, also for parallel runs; installed silently unless an MS-MPI is already present |
+| ParaView 6.2.0 (Kitware) | field visualisation, report images, *Open in ParaView* |
+| OpenCASCADE | STEP/IGES/BREP import |
+
+Disk space: about 3.5 GB. On first start the *Environment* card on the Welcome screen shows
+the components it found (marked *included*), the cores and memory. If Microsoft MPI is
+missing (for example removed later), the card offers **Install Microsoft MPI**.
+
+Advanced alternatives (Settings → Solver): your own OpenFOAM v2606 installation, OpenFOAM
+inside WSL2, or a Linux workstation with `openfoam2606` installed.
 
 ## 2. Create a project
 
@@ -103,8 +107,9 @@ reports.
 
 | Message | Meaning / action |
 |---|---|
-| Microsoft MPI is not installed | Install MS-MPI 10.x; restart AeroBench |
-| A required DLL was not found (STATUS_DLL_NOT_FOUND) | Usually missing MS-MPI; otherwise reinstall OpenFOAM |
+| Microsoft MPI is not installed | Click *Install Microsoft MPI* on the Environment card (administrator approval) |
+| The OpenFOAM included with AeroBench is missing or damaged | Run the AeroBench setup again (repairs the installation; antivirus quarantine is the usual cause) |
+| A required DLL was not found (STATUS_DLL_NOT_FOUND) | Usually missing MS-MPI; otherwise run the setup again |
 | The meshing seed point is not inside the flow domain | Tunnel too small or geometry crossing the domain; enlarge the tunnel |
 | The mesh leaked into the vehicle interior | The surface has openings larger than the local cell size; repair (fill holes) or refine |
 | The solver diverged | Use the Robust numerics preset; check mesh quality and layer collapse |

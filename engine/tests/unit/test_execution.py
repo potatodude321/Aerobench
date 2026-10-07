@@ -79,6 +79,85 @@ def test_native_windows_layout_detection_and_command(tmp_path, monkeypatch):
     assert env["PATH"].split(os.pathsep)[0] == info.bin_dir
 
 
+def _fake_bundle(res: Path) -> Path:
+    """The installer's resources folder: bundled OpenFOAM, ParaView and MS-MPI installer."""
+    b = res / "openfoam" / "OpenFOAM-v2606" / "platforms" / "win64MingwDPInt32Opt" / "bin"
+    b.mkdir(parents=True)
+    for exe in ("simpleFoam.exe", "snappyHexMesh.exe", "libPstream.dll"):
+        (b / exe).write_bytes(b"")
+    (res / "openfoam" / "OpenFOAM-v2606" / "etc").mkdir()
+    pv = res / "ParaView-6.2.0" / "bin"
+    pv.mkdir(parents=True)
+    (pv / ("pvpython.exe" if os.name == "nt" else "pvpython")).write_bytes(b"")
+    (res / "redist").mkdir()
+    (res / "redist" / "msmpisetup.exe").write_bytes(b"")
+    (res / "bundle.json").write_text('{"components": {}}')
+    return res
+
+
+def test_bundled_components_are_preferred_and_damage_is_explained(tmp_path, monkeypatch):
+    from aerobench import bundle
+    from aerobench.execution.native_windows import NativeWindowsProvider
+    from aerobench.viz.detect import detect_paraview
+
+    res = _fake_bundle(tmp_path / "Program Files" / "AeroBench" / "resources")
+    appdata = tmp_path / "AppData"
+    _fake_windows_install(appdata)  # a user's own install exists as well
+    monkeypatch.setenv("AEROBENCH_BUNDLE_DIR", str(res))
+    monkeypatch.setenv("ProgramFiles", str(tmp_path / "pf"))
+    monkeypatch.setenv("SystemRoot", str(tmp_path / "win"))
+    monkeypatch.delenv("AEROBENCH_PVPYTHON", raising=False)
+    assert bundle.bundle_dir() == res and bundle.msmpi_installer() == res / "redist" / "msmpisetup.exe"
+
+    prov = NativeWindowsProvider("native", {"appdata": str(appdata)})
+    info = prov.detect()
+    assert info.details["bundled"] and info.label.endswith("(included)")
+    assert info.project_dir == str(res / "openfoam" / "OpenFOAM-v2606")
+    # MS-MPI missing: the fix is the bundled installer, offered in the app
+    d = info.problems[0]
+    assert d.code == "environment.msmpi_missing" and d.context["bundled_installer"].endswith("msmpisetup.exe")
+    assert "Install Microsoft MPI" in d.action
+    # an explicit root in Settings still wins over the bundle
+    own = NativeWindowsProvider("native", {"root": str(appdata / "Keysight-OpenCFD" / "OpenFOAM" / "v2606")})
+    assert not own.detect().details["bundled"]
+
+    pv = detect_paraview()
+    assert pv["bundled"] and pv["version"] == "6.2.0" and pv["pvpython"].startswith(str(res))
+
+    # antivirus removed the solver: say so and how to repair, not "download OpenFOAM"
+    import shutil
+
+    shutil.rmtree(res / "openfoam" / "OpenFOAM-v2606" / "platforms")
+    bad = NativeWindowsProvider("native", {"appdata": str(tmp_path / "nowhere")}).detect()
+    assert not bad.available and "included with AeroBench is missing or damaged" in bad.problems[0].summary
+    assert "setup again" in bad.problems[0].action
+
+
+def test_restore_links_recreates_duplicates_idempotently(tmp_path):
+    import importlib.util
+    import json
+
+    spec = importlib.util.spec_from_file_location("restore_links", Path(__file__).resolve().parents[3] / "packaging" / "restore_links.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    res = tmp_path / "resources"
+    (res / "ParaView-6.2.0" / "bin").mkdir(parents=True)
+    (res / "ParaView-6.2.0" / "bin" / "vtkCommonCore.dll").write_bytes(b"x" * 1000)
+    (res / "tools").mkdir()
+    links = [["bin/Lib/site-packages/vtkmodules/vtkCommonCore.dll", "bin/vtkCommonCore.dll"],
+             ["bin/Lib/site-packages/paraview/modules/vtkCommonCore.dll", "bin/vtkCommonCore.dll"]]
+    (res / "tools" / "paraview-links.json").write_text(json.dumps({"root": "ParaView-6.2.0", "links": links}))
+    assert mod.main([str(res)]) == 0
+    for rel, _ in links:
+        f = res / "ParaView-6.2.0" / rel
+        assert f.read_bytes() == b"x" * 1000
+        assert os.path.samefile(f, res / "ParaView-6.2.0" / "bin" / "vtkCommonCore.dll")  # a hard link, no extra space
+    assert mod.main([str(res)]) == 0  # repair install: nothing to do, still success
+    # a path escaping the ParaView folder is refused
+    (res / "tools" / "paraview-links.json").write_text(json.dumps({"root": "ParaView-6.2.0", "links": [["../../evil.dll", "bin/vtkCommonCore.dll"]]}))
+    assert mod.main([str(res)]) == 1 and not (tmp_path / "evil.dll").exists()
+
+
 def test_two_processes_never_overwrite_each_others_config(tmp_path):
     """The engine and the worker hold separate Project objects for the same folder."""
     import time

@@ -3,17 +3,18 @@
 
     powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1 [-NoCad] [-PythonSha256 <hash>]
 
-  Requires: Python 3.11+ on PATH (build tool only), Node.js 20+, Git.
+  Requires: Python 3.11+ on PATH (build tool only), Node.js 20+, Git, 7-Zip (7z.exe).
   Output:   desktop\release\AeroBench-Setup-<version>.exe
+            packaging\build\sources\  (GPL source archives: publish next to every installer)
 
   Steps
     1. engine unit tests (fail fast)
-    2. embedded CPython + engine + dependencies  -> packaging\build\python
-    3. desktop renderer + Electron main/preload   -> desktop\dist, desktop\dist-electron
-    4. electron-builder NSIS installer (per-user, no admin rights needed)
-
-  OpenFOAM, Microsoft MPI and ParaView are NOT bundled (licensing and size); the application
-  detects them and links to the official downloads.
+    2. bundled applications: OpenFOAM v2606 (Windows), ParaView 6.2.0, MS-MPI 10.1.3
+                                                  -> packaging\build\bundle (pinned SHA-256)
+    3. embedded CPython + engine + dependencies  -> packaging\build\python
+    4. desktop renderer + Electron main/preload   -> desktop\dist, desktop\dist-electron
+    5. electron-builder NSIS installer (per-machine, one administrator prompt; installs MS-MPI
+       silently when missing)
 #>
 param(
   [switch]$NoCad,
@@ -35,6 +36,10 @@ if (-not $SkipTests) {
   .\.build-venv\Scripts\python -m pytest engine\tests\unit -q
   if ($LASTEXITCODE -ne 0) { throw "unit tests failed" }
 }
+
+Step "Bundled applications (OpenFOAM, ParaView, MS-MPI)"
+python packaging\prepare_thirdparty.py
+if ($LASTEXITCODE -ne 0) { throw "prepare_thirdparty failed" }
 
 Step "Embedded Python runtime"
 $args = @("packaging\prepare_python.py", "--python-version", $PythonVersion)

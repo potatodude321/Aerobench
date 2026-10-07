@@ -17,3 +17,4 @@ dist-electron/
 /.build-venv/
 /desktop/test-results/
 /desktop/build-resources/.icon-ico/
+/packaging/cache/

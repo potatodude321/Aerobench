@@ -17,6 +17,7 @@ export interface DesktopBridge {
   openParaView(exe: string, file: string): Promise<{ ok: boolean; error?: string }>;
   printToPDF(url: string, outPath: string): Promise<{ ok: boolean; path: string }>;
   versions(): Promise<Record<string, string>>;
+  installMsmpi(): Promise<{ ok: boolean; error?: string }>;
   onEngineExit(cb: (info: { code: number; log: string[] }) => void): void;
 }
 

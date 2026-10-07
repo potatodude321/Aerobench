@@ -57,6 +57,8 @@ function startEngine(): Promise<EngineInfo> {
     if (staticDir) fullArgs.push("--static", staticDir);
     if (isDev) fullArgs.push("--dev");
     const env: NodeJS.ProcessEnv = { ...process.env, PYTHONUNBUFFERED: "1" };
+    // OpenFOAM, ParaView and the MS-MPI installer ship in the resources folder (see packaging)
+    if (app.isPackaged) env.AEROBENCH_BUNDLE_DIR = process.resourcesPath;
     const enginePkg = resourcesPath("engine", "src");
     if (fs.existsSync(enginePkg)) env.PYTHONPATH = enginePkg + (env.PYTHONPATH ? path.delimiter + env.PYTHONPATH : "");
     engine = spawn(cmd, fullArgs, { env, windowsHide: true });
@@ -150,6 +152,24 @@ function registerIpc(): void {
     }
   });
   ipcMain.handle("app:versions", () => ({ app: app.getVersion(), electron: process.versions.electron, chrome: process.versions.chrome }));
+  // Install the bundled Microsoft MPI (normally done by the setup; this is the repair path).
+  // The path is fixed here — never taken from the renderer — and Windows asks for elevation.
+  ipcMain.handle("msmpi:install", async () => {
+    if (process.platform !== "win32") return { ok: false, error: "Microsoft MPI is only needed on Windows." };
+    const setup = resourcesPath("redist", "msmpisetup.exe");
+    if (!fs.existsSync(setup)) return { ok: false, error: "The bundled Microsoft MPI installer is missing; run the AeroBench setup again." };
+    const q = (s: string) => "'" + s.replace(/'/g, "''") + "'";
+    const ps = `$p = Start-Process -FilePath ${q(setup)} -ArgumentList '-unattend' -WorkingDirectory ${q(path.dirname(setup))} -Verb RunAs -Wait -PassThru; exit $p.ExitCode`;
+    return await new Promise((resolve) => {
+      const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", ps], { windowsHide: true });
+      let err = "";
+      child.stderr?.on("data", (d) => (err += d.toString()));
+      child.on("error", (e) => resolve({ ok: false, error: e.message }));
+      child.on("close", (code) =>
+        resolve(code === 0 ? { ok: true } : { ok: false, error: /canceled|cancelled|1223/i.test(err) ? "Installation was cancelled." : `Setup ended with code ${code}. ${err.trim()}` }),
+      );
+    });
+  });
 }
 
 // Without a usable GPU (remote desktop, VMs) Chromium refuses WebGL unless the SwiftShader

@@ -73,6 +73,13 @@
       {
         "from": "../packaging/build/THIRD-PARTY-LICENSES.txt",
         "to": "THIRD-PARTY-LICENSES.txt"
+      },
+      {
+        "from": "../packaging/build/bundle",
+        "to": ".",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {
@@ -85,15 +92,22 @@
         }
       ],
       "artifactName": "AeroBench-Setup-${version}.exe",
-      "icon": "build-resources/icon.png"
+      "icon": "build-resources/icon.png",
+      "signExts": [
+        "!.exe"
+      ]
     },
     "nsis": {
       "oneClick": false,
-      "perMachine": false,
+      "perMachine": true,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "AeroBench"
+      "shortcutName": "AeroBench",
+      "allowElevation": true,
+      "include": "build-resources/installer.nsh",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false
     },
     "linux": {
       "target": [

@@ -50,15 +50,14 @@ engine/            Python engine (domain model, OpenFOAM case generation, execut
   tests/           unit, integration (real OpenFOAM/ParaView), fixtures from real runs
 desktop/           Electron + React + TypeScript shell (Mantine UI, three.js viewport, ECharts)
 docs/              architecture, domain model, compatibility, validation, ADRs, guides
-packaging/         Windows build scripts (embedded Python + electron-builder)
+packaging/         Windows build scripts (bundled OpenFOAM/ParaView/MS-MPI, embedded Python, electron-builder)
 ```
 
 ## Getting started
 
-**Users (Windows 10/11, 64-bit):** see [docs/user-guide.md](docs/user-guide.md). In short:
-install OpenFOAM v2606 for Windows (OpenCFD MinGW build), Microsoft MPI 10.x and
-ParaView 6.2 (optional but recommended), then install and start AeroBench. The Welcome
-screen shows what was detected and what is missing, with download links.
+**Users (Windows 10/11, 64-bit):** run `AeroBench-Setup-<version>.exe` — one installer with
+everything included: OpenFOAM v2606 for Windows, Microsoft MPI 10.1.3 (installed silently)
+and ParaView 6.2.0. No other downloads or settings. See [docs/user-guide.md](docs/user-guide.md).
 
 **Developers:** see [docs/developer-setup.md](docs/developer-setup.md).
 

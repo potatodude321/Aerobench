@@ -1,20 +1,41 @@
 # Third-party components and data
 
-AeroBench is proprietary. It **does not link to or redistribute** OpenFOAM, ParaView, MPI or
-Gmsh: these are installed by the user and run as separate programs that exchange files and
-pipes with AeroBench. Libraries that are linked or shipped are permissively licensed (or
-LGPL, dynamically loaded). This page is an engineering inventory, not legal advice — have the
+AeroBench is proprietary. It **does not link to** OpenFOAM, ParaView, MPI or Gmsh: they run
+as separate programs that exchange files and pipes with AeroBench (aggregation, not a combined
+work). The Windows installer **redistributes** OpenFOAM, ParaView and the Microsoft MPI
+installer unmodified (ParaView minus two optional parts), which carries obligations listed
+below. Libraries that are linked into AeroBench are permissively licensed (or LGPL,
+dynamically loaded). This page is an engineering inventory, not legal advice — have the
 distribution reviewed before release.
 
-## External programs (installed by the user, invoked as processes)
+## External programs (run as processes)
 
-| Program | Licence | Use |
-|---|---|---|
-| OpenFOAM (OpenCFD v2606; optionally Foundation v13/14) | GPL-3.0 | Meshing and solving. AeroBench writes standard input dictionaries and reads standard outputs. **Do not bundle the OpenFOAM installer** without meeting GPL source-distribution obligations; link to openfoam.com instead. |
-| Microsoft MPI 10.x | MIT (open-sourced by Microsoft) | Required by the native Windows OpenFOAM build |
-| Open MPI (Linux) | BSD-3-Clause-style | Parallel runs on Linux |
-| ParaView 6.2 / pvpython | BSD-3-Clause (plus bundled third-party licences) | Post-processing sidecar, images |
-| Gmsh (optional) | GPL-2.0-or-later | Alternative CAD tessellation, executed as an external program only |
+| Program | Licence | Shipped? | Use |
+|---|---|---|---|
+| OpenFOAM v2606 for Windows (OpenCFD MinGW build) | GPL-3.0-or-later | **yes**, in the installer (`resources\openfoam`) | Meshing and solving |
+| Microsoft MPI 10.1.3 | MIT; "installers for MS-MPI may be redistributed with your own applications" | **yes**, its installer (`resources\redist`), run silently by the setup | Required by the Windows OpenFOAM build |
+| ParaView 6.2.0 / pvpython (Kitware) | BSD-3-Clause + licences of its bundled libraries (incl. Qt 6, LGPL-3.0) | **yes** (`resources\ParaView-6.2.0`) | Post-processing sidecar, images, *Open in ParaView* |
+| OpenFOAM in WSL2 / Linux, Open MPI | GPL-3.0 / BSD-3-Clause-style | no (user-installed) | Alternative execution environments |
+| Gmsh (optional) | GPL-2.0-or-later | no | Alternative CAD tessellation, executed as an external program only |
+
+### Obligations that come with shipping them
+
+* **OpenFOAM (GPL-3.0)** — the installer carries the GPL text
+  (`resources\licenses\OpenFOAM\GPL-3.0.txt`) and `SOURCE-OFFER.txt`. The Corresponding
+  Source (`OpenFOAM-v2606.tgz`, `ThirdParty-v2606.tar.gz`, as published by OpenCFD, SHA-256
+  pinned in `packaging/prepare_thirdparty.py`) is produced by the build in
+  `packaging\build\sources` and **must be published next to every installer download**
+  (GPL-3.0 §6). The MinGW runtime libraries in the same folder (GCC runtime with the GCC
+  Runtime Library Exception; GMP, MPFR, MPC under LGPL-3.0; FFTW under GPL-2.0-or-later) are
+  covered by the written offer in `SOURCE-OFFER.txt` with their upstream locations.
+* **ParaView** — redistributed with its `share\licenses` folder intact; Qt 6 is LGPL-3.0
+  (dynamically linked, replaceable DLLs; sources at download.qt.io, referenced in the offer).
+  Removed from Kitware's package: the NVIDIA IndeX plugin and its 290 MB library (needs an
+  NVIDIA IndeX licence and GPU) and the `uv` tool. Identical duplicate DLLs are removed from
+  the package and recreated as hard links at install time, restoring Kitware's layout.
+* **Microsoft MPI** — the official redistributable installer, MIT licence and MPICH
+  copyright in `resources\licenses\MS-MPI`. MS-MPI remains installed when AeroBench is
+  uninstalled (shared system component).
 
 ## Engine (Python) dependencies
 

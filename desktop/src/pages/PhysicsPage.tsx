@@ -108,6 +108,9 @@ export function PhysicsPage() {
           onCommit={(v) => patchConfig({ numerics: { write_interval: Math.round(v) } })} description="Iterations (restart points)" />
       </SimpleGrid>
       <Switch size="xs" mt={10} label="Start from a potential-flow solution" checked={nu.potential_init} onChange={(e) => patchConfig({ numerics: { potential_init: e.currentTarget.checked } })} />
+      <Switch size="xs" mt={8} label="Stop as soon as the run has converged" checked={!!nu.stop_when_converged}
+        onChange={(e) => patchConfig({ numerics: { stop_when_converged: e.currentTarget.checked } })} />
+      <Hint style={{ marginTop: 4 }}>Ends the run (state saved) once every convergence criterion is met, instead of running all iterations.</Hint>
 
       <SectionTitle>Extra results to save</SectionTitle>
       <SimpleGrid cols={2} spacing={8}>

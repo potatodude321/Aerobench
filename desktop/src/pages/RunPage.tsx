@@ -1,9 +1,10 @@
 import { ActionIcon, Button, Group, Menu, NumberInput, Progress, Select, SimpleGrid, Stack, Table, Tabs, Text, TextInput, Tooltip } from "@mantine/core";
-import { IconDots, IconPlayerPlay, IconPlayerStop, IconRefresh, IconRepeat } from "@tabler/icons-react";
-import { useEffect, useRef, useState } from "react";
-import { api, events } from "../api/client";
+import { IconDots, IconPlayerPlay, IconPlayerStop, IconRefresh, IconRepeat, IconTerminal2 } from "@tabler/icons-react";
+import { useEffect, useState } from "react";
+import { api } from "../api/client";
 import { CoefficientChart, ResidualChart } from "../charts/RunCharts";
 import { fmt } from "../components/ColorLegend";
+import { formatDuration, LiveLog, LogDrawer } from "../components/LiveLog";
 import { notifyError, notifyOk } from "../components/notify";
 import { DiagnosticList, EmptyState, Hint, KeyValue, PageLayout, SectionTitle, StatusBadge, StatusDot, ValidationList } from "../components/ui";
 import { pid, useApp } from "../state/store";
@@ -64,7 +65,7 @@ export function RunPage() {
       <TextInput size="xs" label="Name (optional)" value={label} onChange={(e) => setLabel(e.currentTarget.value)} placeholder={`U=${cfg.operating.speed} m/s, yaw=${cfg.operating.yaw_deg}°`} />
       <ValidationList issues={project!.validation} filter={(i) => i.severity === "error"} />
       <Hint style={{ marginTop: 8 }}>
-        {project!.staleness.mesh.stale || !project!.staleness.mesh.current ? "The vehicle is meshed first, then solved. " : "The existing mesh is reused. "}
+        {project!.staleness.mesh.state === "current" ? "The existing mesh is reused. " : project!.staleness.mesh.state === "running" ? "It starts when the mesh being generated is ready. " : "The vehicle is meshed first, then solved. "}
         The run continues in the background if AeroBench is closed.
       </Hint>
 
@@ -110,24 +111,31 @@ function RunMonitor({ runId, jobs, onResults }: { runId: string; jobs: any; onRe
   const { refreshRuns } = useApp();
   const [run, setRun] = useState<any>(null);
   const [series, setSeries] = useState<any>(null);
-  const [log, setLog] = useState("");
+  const [prog, setProg] = useState<any>(null);
   const [tab, setTab] = useState<string | null>("monitor");
-  const logRef = useRef<HTMLPreElement>(null);
+  const [meshLog, setMeshLog] = useState(false);
   const live = run && ["queued", "running", "starting", "stopping"].includes(run.status);
 
   const load = async () => {
     try {
-      const r = await api.get(`/api/p/${pid()}/runs/${runId}`);
+      const [r, sr, pr] = await Promise.all([
+        api.get(`/api/p/${pid()}/runs/${runId}`),
+        api.get(`/api/p/${pid()}/runs/${runId}/series?max_points=3000`),
+        api.get(`/api/p/${pid()}/runs/${runId}/progress`).catch(() => null),
+      ]);
       setRun(r);
-      setSeries(await api.get(`/api/p/${pid()}/runs/${runId}/series?max_points=3000`));
+      setSeries(sr);
+      setProg(pr);
     } catch (e) {
       notifyError(e);
     }
   };
 
   useEffect(() => {
-    setLog("");
+    setRun(null);
+    setProg(null);
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runId]);
 
   // poll while live
@@ -135,39 +143,25 @@ function RunMonitor({ runId, jobs, onResults }: { runId: string; jobs: any; onRe
     if (!live) return;
     const t = setInterval(load, 3000);
     return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [live, runId]);
 
-  // reload when job status changes
+  // reload when the job changes state or its results have been read
   const jobStatus = run?.job_id && jobs.states[run.job_id]?.status;
   useEffect(() => {
     if (run) load();
-  }, [jobStatus, jobs.recent.map((j: any) => j.status).join()]);
-
-  // live log via WebSocket
-  useEffect(() => {
-    if (!run?.job_id) return;
-    const jid = run.job_id;
-    events.subscribeLog(jid);
-    const off = events.on((m) => {
-      if (m.type === "log" && m.job_id === jid) setLog((l) => (l + m.text).slice(-200000));
-      if (m.type === "log_step" && m.job_id === jid) setLog((l) => l + `\n──────── step ${m.step} ────────\n`);
-    });
-    return () => {
-      off();
-      events.unsubscribeLog(jid);
-    };
-  }, [run?.job_id]);
-
-  useEffect(() => {
-    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [log]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobStatus, jobs.recent.map((j: any) => `${j.status}${j.ingested}`).join()]);
 
   if (!run) return null;
   const st = run.job;
   const steps = st?.steps || [];
   const doneSteps = steps.filter((s: any) => ["completed", "skipped"].includes(s.status)).length;
-  const lastIter = series?.forces?.time?.at(-1);
-  const pct = run.status === "completed" ? 100 : lastIter ? Math.min(99, (100 * lastIter) / (run.metrics?.iterations || run.iterations || 1)) : (100 * doneSteps) / Math.max(1, steps.length);
+  const target = prog?.target_iterations || run.iterations || 1;
+  const iter = prog?.iteration ?? series?.forces?.time?.at(-1);
+  const pct = run.status === "completed" ? 100 : iter ? Math.min(99.5, (100 * iter) / target) : (100 * doneSteps) / Math.max(1, steps.length);
+  const waiting = prog?.waiting_for;
+  const conv = live || ["stopped", "interrupted"].includes(run.status) ? prog?.convergence ?? run.convergence : run.convergence;
 
   const stop = async (force: boolean) => {
     try {
@@ -268,6 +262,27 @@ function RunMonitor({ runId, jobs, onResults }: { runId: string; jobs: any; onRe
           </Group>
         </Group>
         <Progress value={pct} mt={12} size="xs" animated={live} color={run.status === "failed" ? "red" : undefined} />
+        {waiting ? (
+          <Group justify="space-between" mt={6} wrap="nowrap">
+            <Text size="xs" c="dimmed">
+              Meshing first: {waiting.progress?.phase || waiting.progress?.step || "queued"}
+              {waiting.progress?.step_count ? ` · step ${waiting.progress.step_index + 1} of ${waiting.progress.step_count}` : ""}
+              {waiting.progress?.elapsed_seconds != null ? ` · ${formatDuration(waiting.progress.elapsed_seconds)} so far` : ""}
+            </Text>
+            <Button size="compact-xs" variant="subtle" leftSection={<IconTerminal2 size={13} />} onClick={() => setMeshLog(true)}>
+              Meshing output
+            </Button>
+          </Group>
+        ) : (
+          (iter != null || prog?.job?.elapsed_seconds != null) && (
+            <Text size="xs" c="dimmed" mt={6} className="kpi-value">
+              {iter != null && `Iteration ${Math.round(iter).toLocaleString()} of ${target.toLocaleString()}`}
+              {live && prog?.seconds_per_iteration ? ` · ${prog.seconds_per_iteration < 1 ? prog.seconds_per_iteration.toFixed(2) : prog.seconds_per_iteration.toFixed(1)} s per iteration` : ""}
+              {live && prog?.eta_seconds != null ? ` · about ${formatDuration(prog.eta_seconds)} left` : ""}
+              {prog?.job?.elapsed_seconds != null ? ` · ${live ? "running for" : "took"} ${formatDuration(prog.job.elapsed_seconds)}` : ""}
+            </Text>
+          )
+        )}
         <div style={{ display: "flex", flexWrap: "wrap", columnGap: 14, rowGap: 4, marginTop: 8 }}>
           {steps.map((s: any, i: number) => (
             <StatusDot key={i}
@@ -297,29 +312,44 @@ function RunMonitor({ runId, jobs, onResults }: { runId: string; jobs: any; onRe
               <CoefficientChart series={series} keys={["Cd", "Cl", "Cl_front", "Cl_rear"]} window={run.metrics?.averaging_window} height={300} />
             </div>
           </SimpleGrid>
-          {run.convergence && (
+          {conv && (
             <div style={{ marginTop: 14, maxWidth: 900 }}>
-              <SectionTitle>{run.convergence.summary}</SectionTitle>
+              <SectionTitle right={conv.total ? <Text size="xs" c="dimmed">{conv.met} of {conv.total} criteria met{live ? " so far" : ""}</Text> : undefined}>
+                {live ? "Convergence so far" : "Convergence"}
+              </SectionTitle>
+              <Text size="sm" mb={6}>
+                {conv.summary}
+              </Text>
+              {prog?.stop_when_converged && live && <Hint style={{ marginBottom: 6 }}>This run stops by itself once every criterion is met.</Hint>}
               <Table className="compact" withRowBorders={false}>
                 <Table.Thead>
                   <Table.Tr>
                     <Table.Th>Criterion</Table.Th>
-                    <Table.Th>Value</Table.Th>
-                    <Table.Th>Limit</Table.Th>
+                    <Table.Th>Now</Table.Th>
+                    <Table.Th>Target</Table.Th>
+                    <Table.Th w={150} />
                     <Table.Th />
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
-                  {run.convergence.criteria.map((c: any, i: number) => (
-                    <Table.Tr key={i}>
-                      <Table.Td>{c.name}</Table.Td>
-                      <Table.Td>{fmt(c.value, 4)}</Table.Td>
-                      <Table.Td>
-                        {fmt(c.threshold, 4)} {c.note}
-                      </Table.Td>
-                      <Table.Td>{c.passed === null ? "" : c.passed ? <StatusDot tone="ok" label="Met" /> : <StatusDot tone="warn" label="Not yet" />}</Table.Td>
-                    </Table.Tr>
-                  ))}
+                  {conv.criteria.map((c: any, i: number) => {
+                    const higherIsBetter = /reduction/.test(c.name);
+                    const ratio = c.value == null || !c.threshold ? 0 : higherIsBetter ? c.value / c.threshold : c.threshold / Math.max(1e-30, Math.abs(c.value));
+                    return (
+                      <Table.Tr key={i}>
+                        <Table.Td>{c.name}</Table.Td>
+                        <Table.Td>{fmt(c.value, 4)}</Table.Td>
+                        <Table.Td>
+                          {higherIsBetter ? "≥ " : "≤ "}
+                          {fmt(c.threshold, 4)} {c.note}
+                        </Table.Td>
+                        <Table.Td>
+                          <Progress size="xs" value={Math.min(100, 100 * ratio)} color={c.passed ? "teal" : "yellow"} />
+                        </Table.Td>
+                        <Table.Td>{c.passed === null ? "" : c.passed ? <StatusDot tone="ok" label="Met" /> : <StatusDot tone="warn" label="Not yet" />}</Table.Td>
+                      </Table.Tr>
+                    );
+                  })}
                 </Table.Tbody>
               </Table>
             </div>
@@ -328,10 +358,8 @@ function RunMonitor({ runId, jobs, onResults }: { runId: string; jobs: any; onRe
             <DiagnosticList items={run.diagnostics} />
           </div>
         </Tabs.Panel>
-        <Tabs.Panel value="log" style={{ flex: 1, minHeight: 0, padding: "12px 22px" }}>
-          <pre ref={logRef} className="log-view" style={{ height: "100%", maxHeight: "calc(100vh - 260px)", margin: 0 }}>
-            {log || "Waiting for output…"}
-          </pre>
+        <Tabs.Panel value="log" style={{ flex: 1, minHeight: 0, padding: "12px 22px", display: tab === "log" ? "flex" : undefined }}>
+          {run.job_id && tab === "log" && <LiveLog jobId={run.job_id} live={!!live} style={{ flex: 1, height: "calc(100vh - 290px)" }} />}
         </Tabs.Panel>
         <Tabs.Panel value="details" style={{ padding: "14px 22px", maxWidth: 640 }}>
           <KeyValue
@@ -350,6 +378,7 @@ function RunMonitor({ runId, jobs, onResults }: { runId: string; jobs: any; onRe
           />
         </Tabs.Panel>
       </Tabs>
+      <LogDrawer jobId={waiting?.job_id ?? null} title="Meshing output" opened={meshLog} onClose={() => setMeshLog(false)} />
     </div>
   );
 }

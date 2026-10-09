@@ -23,6 +23,7 @@ from .process import create_time, is_alive, launch_detached, python_executable
 
 LOCK = ".worker.lock"
 TERMINAL = ("completed", "failed", "stopped", "interrupted", "cancelled")
+INGEST_ATTEMPTS = 8  # about 16 s at the default 2 s tick
 
 
 def _ingestors() -> dict[str, Callable]:
@@ -74,6 +75,8 @@ class Worker:
         self.jm = JobManager(project)
         self.launch_inline = launch_inline
         self.db = project.db
+        self._ingest_attempts: dict[str, int] = {}
+        self._conv_checked: dict[str, float] = {}
 
     # ------------------------------------------------------------------ one scheduling pass
     def tick(self) -> dict[str, Any]:
@@ -91,11 +94,21 @@ class Worker:
                     fn(self.project, j["target_id"])
                 self.db.update("jobs", "id", j["id"], {"ingested": 1})
                 report["ingested"].append(j["id"])
+                self._ingest_attempts.pop(j["id"], None)
             except Exception as exc:  # noqa: BLE001 — never let one bad result stop the queue
+                # Result files can still be held open for a moment after the solver exits
+                # (antivirus scanners, file indexers and network drives on Windows): retry for
+                # a while before declaring the results unreadable.
+                n = self._ingest_attempts.get(j["id"], 0) + 1
+                self._ingest_attempts[j["id"]] = n
                 tb = traceback.format_exc()
+                if n < INGEST_ATTEMPTS:
+                    self.db.log_event("ingest_retry", j["id"], attempt=n, error=tb[-1500:])
+                    continue
                 self.db.update("jobs", "id", j["id"], {"ingested": 1, "message": "ingestion error: " + tb[-1500:]})
                 self.db.log_event("ingest_error", j["id"], error=tb[-3000:])
                 self._finalise_unreadable(j, exc)
+        self._auto_stop_converged(report)
         try:
             from ..studies.driver import drive_all
 
@@ -104,6 +117,31 @@ class Worker:
             self.db.log_event("study_driver_error", None, error=traceback.format_exc()[-3000:])
         self._schedule(report)
         return report
+
+    def _auto_stop_converged(self, report: dict) -> None:
+        """Runs set to stop when converged: request a graceful stop (current state written) once
+        every convergence criterion is met. Checked at most every 20 s per run."""
+        now = time.time()
+        for j in self.jm.list(["running"]):
+            if j["kind"] != "solve" or not j["target_id"] or now - self._conv_checked.get(j["id"], 0) < 20:
+                continue
+            self._conv_checked[j["id"]] = now
+            try:
+                row = self.db.one("SELECT config_snapshot_json FROM runs WHERE id = ?", (j["target_id"],))
+                snap = json.loads(row["config_snapshot_json"]) if row and row["config_snapshot_json"] else {}
+                if not (snap.get("numerics") or {}).get("stop_when_converged"):
+                    continue
+                from ..services.progress import run_progress
+
+                pr = run_progress(self.project, j["target_id"])
+                conv = pr.get("convergence") or {}
+                if conv.get("status") == "converged" and conv.get("total") and conv.get("met") == conv.get("total"):
+                    self.jm.request_stop(j["id"])
+                    self.db.update("runs", "id", j["target_id"], {"notes": "Stopped automatically: all convergence criteria were met."})
+                    self.db.log_event("auto_stop_converged", j["target_id"], iteration=pr.get("iteration"))
+                    report.setdefault("auto_stopped", []).append(j["id"])
+            except Exception:  # noqa: BLE001 - never let the check disturb scheduling
+                self.db.log_event("auto_stop_check_error", j["id"], error=traceback.format_exc()[-1500:])
 
     def _finalise_unreadable(self, job: dict, exc: Exception) -> None:
         """A finished job whose outputs could not be read must not leave its run or mesh

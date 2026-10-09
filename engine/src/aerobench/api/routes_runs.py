@@ -113,6 +113,13 @@ def get_run(pid: str, run_id: str, e: EngineState = Depends(engine)):
     return r
 
 
+@router.get("/runs/{run_id}/progress")
+def run_progress(pid: str, run_id: str, e: EngineState = Depends(engine)):
+    from ..services.progress import run_progress as _progress
+
+    return _progress(e.projects.get(pid), run_id)
+
+
 @router.get("/runs/{run_id}/config")
 def get_run_config(pid: str, run_id: str, e: EngineState = Depends(engine)):
     return run_svc.run_config(e.projects.get(pid), run_id).to_json()
@@ -206,8 +213,30 @@ def get_job(pid: str, job_id: str, e: EngineState = Depends(engine)):
 
 
 @router.get("/jobs/{job_id}/log")
-def job_log(pid: str, job_id: str, step: Optional[int] = None, offset: int = -1, e: EngineState = Depends(engine)):
-    return JobManager(e.projects.get(pid)).log_tail(job_id, step, offset)
+def job_log(pid: str, job_id: str, step: Optional[int] = None, offset: int = -1, following: Optional[int] = None,
+            e: EngineState = Depends(engine)):
+    """Log text of one step from ``offset`` (``-1``: the last 256 kB).
+
+    ``following=k``: a live view that has read step ``k`` up to ``offset``. If the job has
+    moved on to another step meanwhile, that step's output is returned from its start
+    (``step`` in the reply tells the client), so a live view never skips the start of a step."""
+    jm = JobManager(e.projects.get(pid))
+    if following is not None:
+        st = jm.state(job_id)
+        cur = st.step_index if st else following
+        if cur != following:
+            out = jm.log_tail(job_id, cur, 0)
+            out["step_changed"] = True
+            return out
+        return jm.log_tail(job_id, following, offset)
+    return jm.log_tail(job_id, step, offset)
+
+
+@router.get("/jobs/{job_id}/progress")
+def job_progress(pid: str, job_id: str, e: EngineState = Depends(engine)):
+    from ..services.progress import job_progress as _progress
+
+    return _progress(e.projects.get(pid), job_id)
 
 
 @router.get("/jobs/{job_id}/commands")

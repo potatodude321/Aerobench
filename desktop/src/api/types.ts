@@ -93,6 +93,7 @@ export interface ProjectConfig {
     potential_init: boolean;
     write_interval: number | null;
     averaging_fraction: number;
+    stop_when_converged?: boolean;
     overrides: Record<string, unknown>;
   };
   observables: Record<string, any>;
@@ -105,6 +106,17 @@ export interface ProjectConfig {
   tags: string[];
 }
 
+/** none | current | running | stopped | failed | stale (only "stale" means the settings changed) */
+export type StageState = "none" | "current" | "running" | "stopped" | "failed" | "stale";
+
+export interface StageStatus {
+  current: any;
+  matching: any;
+  latest: any;
+  state: StageState;
+  stale: boolean;
+}
+
 export interface ProjectPayload {
   project_id: string;
   root: string;
@@ -112,8 +124,8 @@ export interface ProjectPayload {
   validation: ValidationIssue[];
   staleness: {
     hashes: Record<string, string>;
-    mesh: { current: any; latest: any; stale: boolean };
-    solve: { current: any; latest: any; stale: boolean };
+    mesh: StageStatus;
+    solve: StageStatus;
   };
   worker: any;
 }

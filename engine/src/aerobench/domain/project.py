@@ -78,24 +78,47 @@ class ProjectConfig(Model):
 # ---------------------------------------------------------------------------- stage hashes
 
 
+HASH_SCHEME = 2
+
+
 def _dump(model: Any) -> Any:
     if isinstance(model, Model):
         return model.model_dump(mode="json")
     return model
 
 
+def _canon(model: Any) -> Any:
+    """Settings as they affect a result. Fields left at their default are omitted, so a new
+    release that adds a setting (with a default that keeps the old behaviour) does not make
+    every existing mesh and run look out of date."""
+    if isinstance(model, Model):
+        return model.model_dump(mode="json", exclude_defaults=True)
+    return model
+
+
+# Which fields of a part and of a wheel shape the *mesh*; the rest only affect the solve.
+_COMPONENT_MESH_FIELDS = ("id", "source_regions", "role", "wheel_position")
+_WHEEL_MESH_FIELDS = ("position", "component_id", "centre", "axis", "radius", "width")
+
+
+def _pick(model: Any, fields: tuple[str, ...]) -> dict[str, Any]:
+    d = model.model_dump(mode="json")
+    return {k: d[k] for k in fields if k in d}
+
+
 def geometry_stage_input(cfg: ProjectConfig) -> dict[str, Any]:
     out = {
         "revision": cfg.geometry.revision_id,
-        "transform": _dump(cfg.geometry.transform),
-        "components": [_dump(c) for c in cfg.geometry.components],
+        "transform": _canon(cfg.geometry.transform),
+        # names, "suggested" flags and force reporting do not change the surface or the mesh
+        "components": [_pick(c, _COMPONENT_MESH_FIELDS) for c in cfg.geometry.components],
         "vehicle_pose": {"ride_height_offset": cfg.vehicle.ride_height_offset, "rake_deg": cfg.vehicle.rake_deg},
     }
     # Geometry parameters are applied by creating a new geometry revision, so the revision id
     # already captures their effect; definitions alone (e.g. a parameter just added) must not
     # invalidate existing meshes.
     if cfg.geometry.sizing_box is not None:
-        out["sizing_box"] = _dump(cfg.geometry.sizing_box)
+        out["sizing_box"] = _canon(cfg.geometry.sizing_box)
     return out
 
 
@@ -108,14 +131,17 @@ def effective_yaw_range(cfg: ProjectConfig) -> tuple[float, float]:
 
 
 def mesh_stage_input(cfg: ProjectConfig) -> dict[str, Any]:
+    tunnel = _canon(cfg.tunnel)
+    tunnel.pop("farfield_bc", None)  # a boundary condition, not geometry
     return {
+        "scheme": HASH_SCHEME,
         "generator": GENERATOR_VERSION,
         "geometry": geometry_stage_input(cfg),
-        "wheels": [_dump(w) for w in cfg.vehicle.wheels],
-        "tunnel": {k: v for k, v in _dump(cfg.tunnel).items() if k != "farfield_bc"},
+        "wheels": [_pick(w, _WHEEL_MESH_FIELDS) for w in cfg.vehicle.wheels],
+        "tunnel": tunnel,
         "yaw_range": effective_yaw_range(cfg),
-        "mesh": _dump(cfg.mesh),
-        "solver": _dump(cfg.solver),
+        "mesh": _canon(cfg.mesh),
+        "solver": _canon(cfg.solver),
         # layer design depends on the flow speed / viscosity through y+
         "layer_flow": (
             {"speed": cfg.operating.speed, "nu": cfg.physics.fluid.kinematic_viscosity}
@@ -128,18 +154,22 @@ def mesh_stage_input(cfg: ProjectConfig) -> dict[str, Any]:
 def solve_stage_input(cfg: ProjectConfig) -> dict[str, Any]:
     return {
         "mesh": mesh_stage_input(cfg),
-        "operating": _dump(cfg.operating),
+        "operating": _canon(cfg.operating),
         "tunnel_bc": cfg.tunnel.farfield_bc.value,
-        "physics": _dump(cfg.physics),
-        "numerics": _dump(cfg.numerics),
-        "observables": _dump(cfg.observables),
-        "expert": _dump(cfg.expert),
+        "wheel_rotation": [(w.position.value, w.rotation.value, w.custom_omega) for w in cfg.vehicle.wheels],
+        "forces_from": [c.id for c in cfg.geometry.components if c.include_in_forces],
+        "physics": _canon(cfg.physics),
+        "numerics": _canon(cfg.numerics),
+        "observables": _canon(cfg.observables),
+        "expert": _canon(cfg.expert),
         "execution": {"write_format": cfg.execution.write_format},
     }
 
 
 def derived_stage_input(cfg: ProjectConfig) -> dict[str, Any]:
-    return {"solve": solve_stage_input(cfg), "reference": {k: v for k, v in _dump(cfg.reference).items() if k != "locked"}}
+    ref = _canon(cfg.reference)
+    ref.pop("locked", None)
+    return {"solve": solve_stage_input(cfg), "reference": ref}
 
 
 def stage_hashes(cfg: ProjectConfig) -> dict[str, str]:
@@ -148,6 +178,49 @@ def stage_hashes(cfg: ProjectConfig) -> dict[str, str]:
         "mesh": sha256_json(mesh_stage_input(cfg)),
         "solve": sha256_json(solve_stage_input(cfg)),
         "derived": sha256_json(derived_stage_input(cfg)),
+    }
+
+
+# --- scheme 1 (until 0.1.0 build 2): kept only to verify stored hashes before re-keying them
+def _v1_geometry(cfg: ProjectConfig) -> dict[str, Any]:
+    out = {
+        "revision": cfg.geometry.revision_id,
+        "transform": _dump(cfg.geometry.transform),
+        "components": [_dump(c) for c in cfg.geometry.components],
+        "vehicle_pose": {"ride_height_offset": cfg.vehicle.ride_height_offset, "rake_deg": cfg.vehicle.rake_deg},
+    }
+    if cfg.geometry.sizing_box is not None:
+        out["sizing_box"] = _dump(cfg.geometry.sizing_box)
+    return out
+
+
+def v1_mesh_stage_input(cfg: ProjectConfig) -> dict[str, Any]:
+    return {
+        "generator": GENERATOR_VERSION,
+        "geometry": _v1_geometry(cfg),
+        "wheels": [_dump(w) for w in cfg.vehicle.wheels],
+        "tunnel": {k: v for k, v in _dump(cfg.tunnel).items() if k != "farfield_bc"},
+        "yaw_range": effective_yaw_range(cfg),
+        "mesh": _dump(cfg.mesh),
+        "solver": _dump(cfg.solver),
+        "layer_flow": (
+            {"speed": cfg.operating.speed, "nu": cfg.physics.fluid.kinematic_viscosity}
+            if cfg.mesh.layers.mode.value == "target_yplus"
+            else None
+        ),
+    }
+
+
+def v1_solve_stage_input(cfg: ProjectConfig) -> dict[str, Any]:
+    return {
+        "mesh": v1_mesh_stage_input(cfg),
+        "operating": _dump(cfg.operating),
+        "tunnel_bc": cfg.tunnel.farfield_bc.value,
+        "physics": _dump(cfg.physics),
+        "numerics": _dump(cfg.numerics),
+        "observables": _dump(cfg.observables),
+        "expert": _dump(cfg.expert),
+        "execution": {"write_format": cfg.execution.write_format},
     }
 
 

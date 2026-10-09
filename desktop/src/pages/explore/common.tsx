@@ -269,12 +269,17 @@ export function StudyHeader({ d, reload }: { d: any; reload: () => void }) {
 }
 
 export function DesignTable({ d, metrics, highlight, onPromote }: { d: any; metrics: string[]; highlight?: Set<string>; onPromote?: (id: string) => void }) {
-  const { selectRun, setSection, refreshRuns } = useApp();
+  const { selectRun, setSection, refreshRuns, openLog } = useApp();
   const vars: string[] = d.definition.variables.map((v: any) => v.id);
   const openRun = async (rid: string) => {
     await refreshRuns();
     selectRun(rid);
     setSection("results");
+  };
+  const openRunLog = async (rid: string) => {
+    await refreshRuns();
+    const jid = useApp.getState().runs.find((r) => r.id === rid)?.job_id;
+    if (jid) openLog(jid);
   };
   return (
     <ScrollArea h="100%" type="auto">
@@ -319,9 +324,16 @@ export function DesignTable({ d, metrics, highlight, onPromote }: { d: any; metr
                   ) : (
                     <Group gap={4}>
                       {(x.run_ids || []).map((r: any) => (
-                        <Badge key={r.run_id} size="xs" variant="outline" style={{ cursor: "pointer" }} onClick={() => openRun(r.run_id)}>
-                          run{(x.run_ids.length > 1 ? ` c${r.condition + 1}` : "") + (r.attempt > 1 ? ` #${r.attempt}` : "")}
-                        </Badge>
+                        <Group key={r.run_id} gap={2} wrap="nowrap">
+                          <Badge size="xs" variant="outline" style={{ cursor: "pointer" }} onClick={() => openRun(r.run_id)}>
+                            run{(x.run_ids.length > 1 ? ` c${r.condition + 1}` : "") + (r.attempt > 1 ? ` #${r.attempt}` : "")}
+                          </Badge>
+                          <Tooltip label="Solver output (live while running)">
+                            <Text size="xs" c="var(--ab-accent)" style={{ cursor: "pointer" }} onClick={() => openRunLog(r.run_id)}>
+                              log
+                            </Text>
+                          </Tooltip>
+                        </Group>
                       ))}
                       {unconv && <Text size="xs" c="yellow">not converged</Text>}
                       {(x.notes || []).length > 0 && (

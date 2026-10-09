@@ -56,16 +56,24 @@ async def events(ws: WebSocket):
                 continue
             jm = JobManager(p)
             rows = await asyncio.to_thread(lambda jm=jm: [dict(r) for r in jm.list(["queued", "starting", "running", "stopping"])])
-            recent = await asyncio.to_thread(lambda p=p: p.db.all("SELECT id, status, ended_at FROM jobs ORDER BY created_at DESC LIMIT 20"))
-            sig = json.dumps([(r["id"], r["status"]) for r in rows] + [(r["id"], r["status"]) for r in recent])
-            if sig != subs["jobs_sig"]:
-                subs["jobs_sig"] = sig
-                states = {}
+            # "ingested" tells the UI when results have been read (a moment after the job ends)
+            recent = await asyncio.to_thread(lambda p=p: p.db.all(
+                "SELECT id, kind, target_id, status, ended_at, ingested FROM jobs ORDER BY created_at DESC LIMIT 20"))
+
+            def _states(rows=rows, jm=jm):
+                out = {}
                 for r in rows:
                     st = jm.state(r["id"])
                     if st:
-                        states[r["id"]] = {"status": st.status.value, "step_index": st.step_index,
-                                           "steps": [{"name": s.name, "status": s.status} for s in st.steps], "message": st.message}
+                        out[r["id"]] = {"status": st.status.value, "step_index": st.step_index,
+                                        "steps": [{"name": s.name, "status": s.status} for s in st.steps], "message": st.message}
+                return out
+
+            states = await asyncio.to_thread(_states)
+            sig = json.dumps([(r["id"], r["status"], (states.get(r["id"]) or {}).get("step_index")) for r in rows]
+                             + [(r["id"], r["status"], r["ingested"]) for r in recent])
+            if sig != subs["jobs_sig"]:
+                subs["jobs_sig"] = sig
                 await ws.send_text(json.dumps({"type": "jobs", "active": rows, "recent": recent, "states": states}))
             for jid, sub in list(subs["logs"].items()):
                 res = await asyncio.to_thread(jm.log_tail, jid, None, sub["offset"])

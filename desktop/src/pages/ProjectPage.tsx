@@ -1,10 +1,19 @@
-import { Badge, Button, Container, Group, Paper, SimpleGrid, Stack, Table, Text, Textarea, TextInput, Title } from "@mantine/core";
+import { Button, Container, Group, Paper, SimpleGrid, Stack, Table, Text, Textarea, TextInput, Title } from "@mantine/core";
 import { useEffect, useState } from "react";
 import { bridge } from "../api/bridge";
 import { api } from "../api/client";
 import { notifyError } from "../components/notify";
 import { KeyValue, StatusBadge } from "../components/ui";
 import { pid, useApp } from "../state/store";
+
+const STATE_WORDS: Record<string, string> = {
+  none: "nothing yet",
+  current: "up to date with the settings",
+  running: "in progress",
+  stopped: "stopped (resumable)",
+  failed: "failed for the current settings",
+  stale: "none for the current settings",
+};
 
 export function ProjectPage() {
   const { project, patchConfig, closeProject, runs } = useApp();
@@ -46,15 +55,9 @@ export function ProjectPage() {
                 ["Configuration hash (solve)", <span className="mono">{project!.staleness.hashes.solve.slice(0, 16)}</span>],
               ]}
             />
-            <Group gap={6}>
-              <Text size="xs">Mesh</Text>
-              <Badge color={project!.staleness.mesh.stale ? "orange" : "teal"} variant="light">
-                {project!.staleness.mesh.current ? "up to date" : project!.staleness.mesh.stale ? "stale" : "not generated"}
-              </Badge>
-              <Text size="xs">Solution</Text>
-              <Badge color={project!.staleness.solve.stale ? "orange" : "teal"} variant="light">
-                {project!.staleness.solve.current ? "up to date" : project!.staleness.solve.stale ? "stale" : "not run"}
-              </Badge>
+            <Group gap={16}>
+              <Text size="xs">Mesh: {STATE_WORDS[project!.staleness.mesh.state]}</Text>
+              <Text size="xs">Solution: {STATE_WORDS[project!.staleness.solve.state]}</Text>
             </Group>
           </Stack>
         </Paper>

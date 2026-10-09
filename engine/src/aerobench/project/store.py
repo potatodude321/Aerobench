@@ -89,6 +89,9 @@ class Project:
         cfg.name = name
         db = ProjectDB(root / DB_FILE)
         db.set_meta("project_id", cfg.project_id)
+        from ..domain.project import HASH_SCHEME
+
+        db.set_meta("hash_scheme", HASH_SCHEME)
         db.set_meta("created_at", cfg.created_at)
         p = cls(root, cfg, db)
         p.save(snapshot=False)
@@ -118,6 +121,7 @@ class Project:
             (root / d).mkdir(parents=True, exist_ok=True)
         db = ProjectDB(root / DB_FILE)
         p = cls(root, cfg, db)
+        p.rehash_records()
         if v < SCHEMA_VERSION:
             p.save(snapshot=False)
             db.log_event("project_migrated", cfg.project_id, from_version=v, to_version=SCHEMA_VERSION)
@@ -282,16 +286,62 @@ class Project:
 
     # ------------------------------------------------------------------ staleness
     def staleness(self) -> dict[str, Any]:
-        """Which pipeline artefacts match the current configuration (BUILD_SPEC §2)."""
+        """How the meshes and runs relate to the current configuration (BUILD_SPEC §2).
+
+        ``state`` per stage: ``none`` (nothing made yet), ``current`` (a finished mesh / run for
+        exactly these settings), ``running`` (one for these settings is queued or running),
+        ``stopped`` (a run for these settings was stopped; its partial results are kept),
+        ``failed`` (the latest attempt for these settings failed) or ``stale`` (there are meshes /
+        runs, but none for the current settings: something was changed). Only ``stale`` means
+        "the setup changed"."""
         h = stage_hashes(self.config)
-        mesh = self.db.one("SELECT id, status, created_at FROM mesh_revisions WHERE input_hash = ? AND status = 'completed' "
-                           "ORDER BY created_at DESC LIMIT 1", (h["mesh"],))
-        latest_mesh = self.db.one("SELECT id, input_hash, status FROM mesh_revisions ORDER BY created_at DESC LIMIT 1")
-        run = self.db.one("SELECT id, status FROM runs WHERE solve_hash = ? AND status = 'completed' ORDER BY created_at DESC LIMIT 1",
-                          (h["solve"],))
-        latest_run = self.db.one("SELECT id, solve_hash, status FROM runs ORDER BY created_at DESC LIMIT 1")
-        return {
-            "hashes": h,
-            "mesh": {"current": mesh, "latest": latest_mesh, "stale": bool(latest_mesh) and not mesh},
-            "solve": {"current": run, "latest": latest_run, "stale": bool(latest_run) and not run},
-        }
+        out: dict[str, Any] = {"hashes": h}
+        for stage, table, col, ok, active, stopped in (
+            ("mesh", "mesh_revisions", "input_hash", ("completed",), ("queued", "starting", "running"), ()),
+            ("solve", "runs", "solve_hash", ("completed",), ("queued", "starting", "running", "stopping"), ("stopped", "interrupted")),
+        ):
+            current = self.db.one(f"SELECT id, status, created_at FROM {table} WHERE {col} = ? AND status = 'completed' "
+                                  "ORDER BY created_at DESC LIMIT 1", (h[stage],))
+            matching = self.db.one(f"SELECT id, status, created_at FROM {table} WHERE {col} = ? ORDER BY created_at DESC LIMIT 1",
+                                   (h[stage],))
+            latest = self.db.one(f"SELECT id, {col} AS input_hash, status FROM {table} ORDER BY created_at DESC LIMIT 1")
+            if latest is None:
+                state = "none"
+            elif matching is not None and matching["status"] in active:
+                state = "running"
+            elif current is not None:
+                state = "current"
+            elif matching is not None and matching["status"] in stopped:
+                state = "stopped"
+            elif matching is not None:
+                state = "failed"
+            else:
+                state = "stale"
+            out[stage] = {"current": current, "matching": matching, "latest": latest, "state": state, "stale": state == "stale"}
+        return out
+
+    def rehash_records(self) -> int:
+        """Re-key stored mesh/run hashes to the current hashing scheme.
+
+        A stored hash is converted only if it provably matches the record's own frozen
+        configuration under the old scheme (so a mesh made by an older case generator, or a
+        record whose snapshot cannot be read, stays out of date). Idempotent."""
+        from ..domain.project import HASH_SCHEME, v1_mesh_stage_input, v1_solve_stage_input
+        from ..core.fs import sha256_json
+
+        if self.db.get_meta("hash_scheme", 1) >= HASH_SCHEME:
+            return 0
+        changed = 0
+        for table, col, old_fn, new_key in (("mesh_revisions", "input_hash", v1_mesh_stage_input, "mesh"),
+                                            ("runs", "solve_hash", v1_solve_stage_input, "solve")):
+            for row in self.db.all(f"SELECT id, {col} AS h, config_snapshot_json FROM {table}"):
+                try:
+                    snap = ProjectConfig.from_json(json.loads(row["config_snapshot_json"]))
+                except Exception:  # noqa: BLE001 - unreadable snapshot: leave the record as it is
+                    continue
+                if row["h"] == sha256_json(old_fn(snap)):
+                    self.db.update(table, "id", row["id"], {col: stage_hashes(snap)[new_key]})
+                    changed += 1
+        self.db.set_meta("hash_scheme", HASH_SCHEME)
+        self.db.log_event("hashes_rekeyed", None, records=changed, scheme=HASH_SCHEME)
+        return changed

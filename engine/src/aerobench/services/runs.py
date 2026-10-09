@@ -178,6 +178,10 @@ def ingest_run(project: Project, run_id: str) -> dict[str, Any]:
     }.get(status, status.value)
     if run_status == "completed" and not res.get("available"):
         run_status = "failed"
+    job_row = project.db.one("SELECT created_at FROM jobs WHERE id = ?", (row["job_id"],)) if row.get("job_id") else None
+    if run_status == "stopped" and res.get("available") and job_row and project.db.one(
+            "SELECT 1 AS x FROM events WHERE kind = 'auto_stop_converged' AND ref = ? AND t >= ?", (run_id, job_row["created_at"])):
+        run_status = "completed"  # stopped by the convergence monitor: a finished result
         diags.append(Diagnostic(code="results.missing", category=ErrorCategory.SOLVER,
                                 summary="The solver finished but no force data was written.").model_dump(mode="json"))
     wall = None

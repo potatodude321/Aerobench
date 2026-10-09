@@ -103,6 +103,9 @@ export function ResultsPage() {
     api.get(`/api/p/${pid()}/viz/status`).then(setVizStatus).catch(() => undefined);
   }, []);
 
+  // re-read when the selected run's results change (finished, resumed, re-read from the case)
+  const sel = runs.find((r) => r.id === runId);
+  const runStamp = sel ? `${sel.status}|${sel.iterations}|${sel.ended_at}|${sel.metrics?.Cd}` : "";
   useEffect(() => {
     if (!runId) return;
     setRun(null);
@@ -119,7 +122,7 @@ export function ResultsPage() {
         notifyError(e);
       }
     })();
-  }, [runId]);
+  }, [runId, runStamp]);
 
   // default scene: Cp on the body
   useEffect(() => {

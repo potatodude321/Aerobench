@@ -1,10 +1,11 @@
 import { Button, Checkbox, Group, Loader, NumberInput, Progress, SegmentedControl, SimpleGrid, Slider, Stack, Switch, Table, Text, Tooltip } from "@mantine/core";
-import { IconGridDots, IconRefresh } from "@tabler/icons-react";
+import { IconGridDots, IconRefresh, IconTerminal2 } from "@tabler/icons-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { api } from "../api/client";
 import type { MeshPlan } from "../api/types";
 import { fmt } from "../components/ColorLegend";
+import { formatDuration, LogDrawer } from "../components/LiveLog";
 import { notifyError, notifyOk } from "../components/notify";
 import { DiagnosticList, Hint, KeyValue, NumField, PageLayout, SectionTitle, StatusBadge, StatusDot } from "../components/ui";
 import { pid, useApp } from "../state/store";
@@ -80,7 +81,7 @@ function LevelLegend({ levels, base }: { levels: number[]; base: number }) {
 }
 
 export function MeshPage() {
-  const { project, patchConfig, geometryVersion, jobs, refreshProject, setSection } = useApp();
+  const { project, patchConfig, geometryVersion, jobs, refreshProject, setSection, environment, meshView, setMeshView } = useApp();
   const cfg = project!.config;
   const m = cfg.mesh;
   const [plan, extra, loading] = usePlan();
@@ -88,24 +89,31 @@ export function MeshPage() {
   const [current, setCurrent] = useState<any>(null);
   const [hidden, setHidden] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
-  const [cores, setCores] = useState<number>(cfg.execution.n_procs);
+  const maxCores = environment?.max_cores || 1;
+  const cores = Math.max(1, Math.min(maxCores, cfg.execution.n_procs));
   const viewer = useRef<Viewer | null>(null);
   const [geomLoaded, setGeomLoaded] = useState(0);
-  const [mode, setMode] = useState<"plan" | "mesh">("plan");
+  // view settings live in the store, so they survive leaving and re-opening the page
+  const mode: "plan" | "mesh" = meshView.mode ?? "plan";
+  const setMode = (v: "plan" | "mesh") => setMeshView({ mode: v, modeChosen: true });
+  const show: Show = meshView.show ?? { vehicle: true, ground: false, boxes: false, domain: true, wireframe: false };
+  const setShow = (v: Show) => setMeshView({ show: v });
+  const cut: Cut = meshView.cut ?? "off";
+  const setCut = (v: Cut) => setMeshView({ cut: v });
+  const cutPos: Record<string, number> = meshView.cutPos ?? {};
+  const setCutPos = (f: (p: Record<string, number>) => Record<string, number>) => setMeshView({ cutPos: f(useApp.getState().meshView.cutPos ?? {}) });
   const [view, setView] = useState<MeshView | null>(null);
-  const [show, setShow] = useState<Show>({ vehicle: true, ground: false, boxes: false, domain: true, wireframe: false });
-  const [cut, setCut] = useState<Cut>("off");
-  const [cutPos, setCutPos] = useState<Record<string, number>>({});
   const [layerBusy, setLayerBusy] = useState<string | null>(null);
   const [levels, setLevels] = useState<number[]>([]);
-  const autoMode = useRef(false);
+  const [logOpen, setLogOpen] = useState(false);
+  const [progress, setProgress] = useState<any>(null);
+  const st = project!.staleness.mesh;
 
+  // the mesh shown: the one for the current settings when there is one, else the newest
+  const shownId: string | null = st.matching?.id ?? meshes[0]?.id ?? null;
   const loadMeshes = useCallback(async () => {
     try {
-      const list = await api.get(`/api/p/${pid()}/meshes`);
-      setMeshes(list);
-      const latest = list[0];
-      setCurrent(latest ? await api.get(`/api/p/${pid()}/meshes/${latest.id}`) : null);
+      setMeshes(await api.get(`/api/p/${pid()}/meshes`));
     } catch (e) {
       notifyError(e);
     }
@@ -113,17 +121,58 @@ export function MeshPage() {
 
   useEffect(() => {
     loadMeshes();
-  }, [loadMeshes, jobs.recent.map((j: any) => j.status).join()]);
+  }, [loadMeshes, jobs.recent.map((j: any) => `${j.status}${j.ingested}`).join()]);
+
+  const meshRowStamp = meshes.find((x) => x.id === shownId)?.status;
+  useEffect(() => {
+    if (!shownId) return setCurrent(null);
+    let cancelled = false;
+    api.get(`/api/p/${pid()}/meshes/${shownId}`).then((r) => !cancelled && setCurrent(r)).catch(notifyError);
+    return () => {
+      cancelled = true;
+    };
+  }, [shownId, meshRowStamp, jobs.recent.map((j: any) => `${j.status}${j.ingested}`).join()]);
 
   const viewable = !!current && ["completed", "failed"].includes(current.status) && !!current.cells;
-  // open on the generated mesh once one exists (the first time only; the user's choice wins)
+  // open on the generated mesh once one exists, unless the user picked the planning view
   useEffect(() => {
-    if (viewable && !autoMode.current) {
-      autoMode.current = true;
-      setMode("mesh");
-    }
-    if (!viewable) setMode("plan");
+    if (viewable && !meshView.modeChosen && mode !== "mesh") setMeshView({ mode: "mesh" });
+    if (!viewable && mode === "mesh") setMeshView({ mode: "plan" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewable, current?.id]);
+
+  // live progress of a meshing job
+  const meshJob = current && jobs.states[current.job_id];
+  const meshRunning = !!meshJob && !["completed", "failed", "stopped", "cancelled", "interrupted"].includes(meshJob.status);
+  useEffect(() => {
+    if (!meshRunning || !current?.job_id) return setProgress(null);
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = async () => {
+      try {
+        const r = await api.get(`/api/p/${pid()}/jobs/${current.job_id}/progress`);
+        if (!cancelled) setProgress(r);
+      } catch {
+        /* try again */
+      }
+      if (!cancelled) timer = setTimeout(tick, 2000);
+    };
+    tick();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [meshRunning, current?.job_id]);
+
+  const cancelMeshing = async () => {
+    if (!current?.job_id) return;
+    try {
+      await api.post(`/api/p/${pid()}/jobs/${current.job_id}/stop`, { force: true });
+      notifyOk("Meshing is being cancelled.");
+    } catch (e) {
+      notifyError(e);
+    }
+  };
 
   // vehicle surface (the triangulated CAD) in both modes
   useEffect(() => {
@@ -169,7 +218,15 @@ export function MeshPage() {
         if (p) {
           const lo = p.vehicle_bbox_min;
           const hi = p.vehicle_bbox_max;
-          setCutPos({ x: 0.5 * (lo[0] + hi[0]), y: p.half_model ? lo[1] + 0.25 * (hi[1] - lo[1]) : 0.5 * (lo[1] + hi[1]), z: lo[2] + 0.3 * (hi[2] - lo[2]) });
+          // keep positions the user chose (clamped into this mesh's tunnel); fill in the rest
+          const d0 = p.domain_min;
+          const d1 = p.domain_max;
+          const clamp = (v: number | undefined, a: number, fb: number) => (v === undefined ? fb : Math.min(d1[a], Math.max(d0[a], v)));
+          setCutPos((prev) => ({
+            x: clamp(prev.x, 0, 0.5 * (lo[0] + hi[0])),
+            y: clamp(prev.y, 1, p.half_model ? lo[1] + 0.25 * (hi[1] - lo[1]) : 0.5 * (lo[1] + hi[1])),
+            z: clamp(prev.z, 2, lo[2] + 0.3 * (hi[2] - lo[2])),
+          }));
         }
       })
       .catch((e) => {
@@ -348,6 +405,7 @@ export function MeshPage() {
     setBusy(true);
     try {
       const r = await api.post(`/api/p/${pid()}/meshes`, { force, nprocs: cores });
+      setMeshView({ modeChosen: false });
       notifyOk(r.reused ? "This mesh already exists for the current settings." : "Meshing started.");
       await loadMeshes();
       await refreshProject();
@@ -360,10 +418,9 @@ export function MeshPage() {
 
   const ld = plan?.layer_design;
   const lay = m.layers || {};
-  const meshJob = current && jobs.states[current.job_id];
   const coverage = current?.snappy?.layers || [];
   const q = current?.quality;
-  const st = project!.staleness.mesh;
+  const forCurrent = !!current && current.id === st.matching?.id;
   const viewPlan = mode === "mesh" ? view?.plan : plan;
   const span = useMemo(() => {
     const p = viewPlan;
@@ -374,19 +431,38 @@ export function MeshPage() {
 
   const latest = current && (
     <>
-      <SectionTitle first right={<StatusBadge status={meshJob && !["completed", "failed"].includes(meshJob.status) ? meshJob.status : current.status} />}>
-        Latest mesh
+      <SectionTitle first right={<StatusBadge status={meshRunning ? meshJob.status : current.status} />}>
+        {forCurrent ? "Mesh for these settings" : "Most recent mesh"}
       </SectionTitle>
-      {meshJob && !["completed", "failed"].includes(meshJob.status) && (
+      {meshRunning && (
         <Stack gap={4} mb={10}>
-          <Progress value={(100 * meshJob.step_index) / Math.max(1, meshJob.steps.length)} animated />
-          <Text size="xs" c="dimmed">
-            {meshJob.steps[meshJob.step_index]?.name} — step {meshJob.step_index + 1} of {meshJob.steps.length}
-          </Text>
+          <Progress value={(100 * (meshJob.step_index + 0.5)) / Math.max(1, meshJob.steps.length)} animated />
+          <Group justify="space-between" wrap="nowrap">
+            <Text size="xs" c="dimmed">
+              {progress?.phase || meshJob.steps[meshJob.step_index]?.name} · step {meshJob.step_index + 1} of {meshJob.steps.length}
+              {progress?.elapsed_seconds != null && ` · ${formatDuration(progress.elapsed_seconds)} so far`}
+            </Text>
+            <Button size="compact-xs" color="red" variant="subtle" onClick={cancelMeshing}>
+              Cancel
+            </Button>
+          </Group>
         </Stack>
       )}
-      {st.stale && (
-        <Hint style={{ color: "var(--ab-warn)", marginBottom: 8 }}>The settings changed since this mesh was made. It is kept for the runs that used it; the next run meshes again.</Hint>
+      {current.job_id && (
+        <Button size="compact-xs" variant="subtle" mb={8} leftSection={<IconTerminal2 size={13} />} onClick={() => setLogOpen(true)}>
+          {meshRunning ? "Show meshing output (live)" : "Show meshing output"}
+        </Button>
+      )}
+      {!forCurrent && st.state === "stale" && (
+        <Hint style={{ color: "var(--ab-warn)", marginBottom: 8 }}>
+          No mesh exists for the current settings yet; this one was made with other settings and is kept for the runs that used it. Generate a mesh, or start a run, to mesh with the current settings.
+        </Hint>
+      )}
+      {forCurrent && current.status === "failed" && (
+        <Hint style={{ color: "var(--ab-err)", marginBottom: 8 }}>Meshing with the current settings failed. The findings below say why; the meshing output has the details.</Hint>
+      )}
+      {forCurrent && ["stopped", "cancelled"].includes(current.status) && (
+        <Hint style={{ marginBottom: 8 }}>Meshing was cancelled. Generate the mesh again when ready.</Hint>
       )}
       {q ? (
         <KeyValue
@@ -553,7 +629,8 @@ export function MeshPage() {
   const footer = (
     <Stack gap={8}>
       <Group gap={8} align="flex-end" wrap="nowrap">
-        <NumberInput size="xs" w={78} label="Cores" min={1} max={256} value={cores} onChange={(v) => typeof v === "number" && setCores(v)} />
+        <NumberInput size="xs" w={78} label="Cores" min={1} max={maxCores} value={cores}
+          onChange={(v) => typeof v === "number" && v >= 1 && patchConfig({ execution: { n_procs: Math.max(1, Math.min(maxCores, Math.round(v))) } })} />
         <Button style={{ flex: 1 }} leftSection={<IconGridDots size={15} />} loading={busy} onClick={() => generate(false)} disabled={!plan}>
           Generate mesh
         </Button>
@@ -622,6 +699,7 @@ export function MeshPage() {
           </div>
         )}
       </Viewport3D>
+      <LogDrawer jobId={current?.job_id ?? null} title={`Meshing output — ${current?.id ?? ""}`} opened={logOpen} onClose={() => setLogOpen(false)} />
     </PageLayout>
   );
 }

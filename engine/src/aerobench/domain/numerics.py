@@ -38,4 +38,7 @@ class NumericsConfig(Model):
     potential_init: bool = True
     write_interval: Optional[int] = Field(None, ge=1, description="None = write at end and every 500 iterations")
     averaging_fraction: float = Field(0.2, gt=0, le=0.8, description="Final fraction of iterations used for averaged coefficients")
+    stop_when_converged: bool = Field(
+        False, description="Stop the solver (state written) as soon as every convergence criterion is met; "
+        "the remaining iterations are skipped")
     overrides: dict[str, Any] = Field(default_factory=dict, description="Custom numeric overrides (relaxation, tolerances)")

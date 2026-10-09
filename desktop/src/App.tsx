@@ -14,7 +14,7 @@ import { useEffect } from "react";
 import { api, events, initEngine } from "./api/client";
 import { bridge } from "./api/bridge";
 import type { ProjectPayload } from "./api/types";
-import { notifyError } from "./components/notify";
+import { notifyError, notifyOk } from "./components/notify";
 import { StatusDot } from "./components/ui";
 import { Section, useApp } from "./state/store";
 import { ComparePage } from "./pages/ComparePage";
@@ -101,18 +101,23 @@ function stepStates(project: ProjectPayload, activeJobs: any[], hasResults: bool
   out.geometry = hasGeo ? { state: "done", tip: "Vehicle imported" } : { state: "todo", note: "Start here", tip: "Import the vehicle surface" };
   const t = errs(/^tunnel/);
   out.tunnel = !hasGeo ? { state: "todo", tip: "Set up after importing the vehicle" } : t ? { state: "issue", note: `${t} issue${t > 1 ? "s" : ""}`, tip: "Setup issues" } : { state: "done", tip: "Domain set" };
-  if (meshJobs) out.mesh = { state: "running", note: "Meshing", tip: "Meshing in progress" };
-  else if (st.mesh.current) out.mesh = { state: "done", tip: "The mesh matches the current setup" };
-  else if (st.mesh.stale) out.mesh = { state: "stale", note: "Out of date", tip: "The setup changed since the last mesh; a new mesh is generated with the next run" };
+  const m = st.mesh.state;
+  if (meshJobs || m === "running") out.mesh = { state: "running", note: "Meshing", tip: "A mesh for the current settings is being generated" };
+  else if (m === "current") out.mesh = { state: "done", tip: "A mesh exists for the current settings" };
+  else if (m === "failed") out.mesh = { state: "issue", note: "Failed", tip: "Meshing with the current settings failed; see the Mesh page" };
+  else if (m === "stale") out.mesh = { state: "stale", note: "Not meshed", tip: "No mesh exists for the current settings yet; the next run meshes first" };
   else out.mesh = { state: "todo", tip: "Not meshed yet (a run meshes automatically)" };
   const ph = errs(/^(physics|operating|numerics)/);
   out.physics = !hasGeo ? { state: "todo", tip: "Set up after importing the vehicle" } : ph ? { state: "issue", note: `${ph} issue${ph > 1 ? "s" : ""}`, tip: "Setup issues" } : { state: "done", tip: "Physics set" };
+  const r = st.solve.state;
   if (runJobs) out.run = { state: "running", note: `${runJobs} running`, tip: "Simulations in progress" };
-  else if (st.solve.current) out.run = { state: "done", tip: "A run matches the current setup" };
-  else if (st.solve.stale) out.run = { state: "stale", note: "Setup changed", tip: "The setup changed since the last run" };
+  else if (r === "current") out.run = { state: "done", tip: "A finished run exists for the current settings" };
+  else if (r === "stopped") out.run = { state: "done", note: "Stopped", tip: "The run for the current settings was stopped; it can be resumed" };
+  else if (r === "failed") out.run = { state: "issue", note: "Failed", tip: "The run for the current settings failed; see the Run page" };
+  else if (r === "stale") out.run = { state: "stale", note: "Not run", tip: "Nothing has been run with the current settings yet" };
   else out.run = { state: "todo", tip: "No run yet" };
   if (!hasResults) out.results = { state: "todo", tip: "No results yet" };
-  else if (st.solve.stale) out.results = { state: "stale", note: "Older setup", tip: "The results are from an earlier setup" };
+  else if (r === "stale" || r === "failed") out.results = { state: "stale", note: "Earlier settings", tip: "The results shown are from runs with other settings" };
   else out.results = { state: "done", tip: "Results available" };
   return out;
 }
@@ -139,13 +144,29 @@ export default function App() {
       if (msg.type === "jobs") {
         const prev = useApp.getState().jobs;
         setJobs({ active: msg.active, recent: msg.recent, states: msg.states });
-        const finished = msg.recent.some((r: any) => {
+        const changed = msg.recent.some((r: any) => {
           const before = prev.recent.find((x: any) => x.id === r.id);
-          return before && before.status !== r.status;
+          return !before || before.status !== r.status || before.ingested !== r.ingested;
         });
-        if (finished || msg.active.length !== prev.active.length) {
-          useApp.getState().refreshRuns();
-          useApp.getState().refreshProject();
+        // results are read a moment after a job ends ("ingested"): only then are they complete
+        const ready = msg.recent.filter((r: any) => {
+          const before = prev.recent.find((x: any) => x.id === r.id);
+          return before && !before.ingested && r.ingested;
+        });
+        if (changed || msg.active.length !== prev.active.length) {
+          const st = useApp.getState();
+          st.refreshRuns().then(() => {
+            for (const r of ready) {
+              if (r.kind === "solve") {
+                const run = useApp.getState().runs.find((x) => x.id === r.target_id);
+                if (run?.metrics) notifyOk(`Cd ${run.metrics.Cd?.toFixed(4) ?? "—"} — open the Results page to explore it.`, `Results ready: ${run.label}`);
+                else if (run && ["failed", "cancelled"].includes(run.status)) notifyError(new Error("See the Run page for the reason."), `Run ${run.label} did not finish`);
+              } else if (r.kind === "mesh" && r.status === "completed") {
+                notifyOk("Open the Mesh page to inspect it.", "Mesh ready");
+              }
+            }
+          });
+          st.refreshProject();
         }
       }
     });

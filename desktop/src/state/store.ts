@@ -38,7 +38,13 @@ interface AppState {
   jobs: JobsSnapshot;
   busy: Record<string, boolean>;
   geometryVersion: number; // bump to force viewport reload
+  /** job to select when the Logs page opens */
+  logJobId: string | null;
+  /** view settings of the Mesh page, kept while the project is open */
+  meshView: Record<string, any>;
   setSection(s: Section): void;
+  openLog(jobId: string): void;
+  setMeshView(patch: Record<string, any>): void;
   setExpert(v: boolean): void;
   setEnvironment(e: any): void;
   setEngineReady(ok: boolean, err?: string | null): void;
@@ -67,12 +73,16 @@ export const useApp = create<AppState>((set, get) => ({
   jobs: { active: [], recent: [], states: {} },
   busy: {},
   geometryVersion: 0,
+  logJobId: null,
+  meshView: {},
   setSection: (section) => set({ section }),
+  openLog: (jobId) => set({ logJobId: jobId, section: "logs" }),
+  setMeshView: (patch) => set((s) => ({ meshView: { ...s.meshView, ...patch } })),
   setExpert: (expertMode) => set({ expertMode }),
   setEnvironment: (environment) => set({ environment }),
   setEngineReady: (ok, err = null) => set({ engineReady: ok, engineError: err }),
   openProjectPayload: (p) => {
-    set({ project: p, section: p.config.geometry.revision_id ? "geometry" : "geometry", runs: [], selectedRunId: null, compareRunIds: [] });
+    set({ project: p, section: "geometry", runs: [], selectedRunId: null, compareRunIds: [], meshView: {}, logJobId: null });
     events.subscribeProject(p.project_id);
     get().refreshRuns();
   },

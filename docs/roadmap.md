@@ -12,7 +12,7 @@ tested and documented; later items are ordered by engineering value.
   components and wheel detection, frontal area, pose.
 * Virtual wind tunnel, mesh planning (snappyHexMesh, layers for a target y+), steady RANS with
   moving ground, rotating wheels and yaw; versioned numerics presets.
-* Execution providers: native Windows (v2606 + MS-MPI), WSL2, Linux; detached crash-safe jobs.
+* Execution providers: native Windows (v2606 + MS-MPI), Linux; detached crash-safe jobs. (WSL2 removed in build 3, may return.)
 * Results with explicit conventions, convergence assessment, ParaView 6.2 sidecar, compare.
 * Studies, optimisation (GP-BO, NSGA-II, Nelder–Mead, space-filling), geometry
   parameterisation (rigid, FFD, RBF) with validity checks, GCI mesh sensitivity.

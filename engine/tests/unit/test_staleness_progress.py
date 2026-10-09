@@ -118,3 +118,23 @@ def test_snappy_phase_is_the_latest_banner():
     assert snappy_phase("Refinement phase\n...\nSurface refinement iteration 1\n") == "Refining near the surfaces"
     assert snappy_phase("Surface refinement iteration 3\nMorph iteration 2\n") == "Snapping to the surface"
     assert snappy_phase("") is None
+
+
+def test_cancelled_meshing_cancels_waiting_run_with_reason(proj):
+    """A run waiting for a mesh the user cancelled is cancelled (not 'failed') and says why."""
+    from aerobench.jobs.manager import JobManager
+    from aerobench.jobs.worker import Worker
+
+    p = proj
+    jm = JobManager(p)
+    mesh_job = jm.create("mesh", p.root, [], {"kind": "local"}, target_kind="mesh", target_id="mesh-0")
+    _mesh_row(p, "queued")
+    _run_row(p, "queued")
+    run_job = jm.create("solve", p.root, [], {"kind": "local"}, target_kind="run", target_id="run-0", depends_on=mesh_job)
+    jm.request_stop(mesh_job, force=True)  # still queued: cancelled at once
+    assert jm.row(mesh_job)["status"] == "cancelled"
+    Worker(p, launch_inline=True).tick()
+    assert jm.row(run_job)["status"] == "cancelled"
+    run = p.db.one("SELECT status, diagnostics_json FROM runs WHERE id = 'run-0'")
+    assert run["status"] == "cancelled"
+    assert "cancelled" in json.loads(run["diagnostics_json"])[0]["summary"]

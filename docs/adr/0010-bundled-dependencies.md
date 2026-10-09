@@ -34,7 +34,8 @@ Program Files; at the end it launches the MS-MPI wizard for the user to click th
 4. **WSL is not bundled.** It would need Windows optional features and a reboot, CPU
    virtualisation enabled in the firmware, and a Linux distribution with OpenFOAM inside it
    (~1 GB more) — more steps and failure modes for a newcomer, for no benefit over the native
-   build. SimFlow does not use WSL either. WSL stays an optional advanced engine.
+   build. SimFlow does not use WSL either. (Update, build 3: the WSL engine was removed altogether
+   until the native Windows path is mature; see ADR-0002.)
 5. **GPL compliance** for OpenFOAM: GPL text and a source offer in the installation; the
    Corresponding Source archives are produced by the build and published next to every
    installer (see third-party.md).

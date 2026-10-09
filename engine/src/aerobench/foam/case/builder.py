@@ -641,5 +641,5 @@ def assert_no_dynamic_code(gc: GeneratedCase) -> None:
                     "case.dynamic_code",
                     ErrorCategory.CONFIGURATION,
                     f"Generated file {path} contains dynamic code ('{tok}'), which the native Windows build cannot compile.",
-                    action="Remove the expert override that introduced it, or use the WSL provider.",
+                    action="Remove the expert override that introduced it (coded boundary conditions and functions are not supported).",
                 )

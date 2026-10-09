@@ -188,11 +188,19 @@ class Worker:
                 self.db.update("jobs", "id", j["id"], {"status": "cancelled", "ended_at": utc_now_iso(), "ingested": 1,
                                                        "message": f"Cancelled: prerequisite job {j['depends_on']} did not complete successfully."})
                 if j["kind"] == "solve" and j["target_id"]:
-                    from ..core.errors import Diagnostic, ErrorCategory
+                    from ..core.errors import Diagnostic, ErrorCategory, Severity
 
-                    self.db.update("runs", "id", j["target_id"], {"status": "failed", "diagnostics_json": [Diagnostic(
-                        code="mesh.failed", category=ErrorCategory.MESH, summary="Meshing failed, so the run could not start.",
-                        action="Open the Mesh page for the meshing diagnostics.").model_dump(mode="json")]})
+                    d = self.db.one("SELECT status FROM jobs WHERE id = ?", (j["depends_on"],))
+                    if d and d["status"] in ("cancelled", "stopped"):
+                        diag = Diagnostic(code="mesh.cancelled", category=ErrorCategory.MESH, severity=Severity.INFO,
+                                          summary="Meshing was cancelled, so the run did not start.",
+                                          action="Generate the mesh again, or start a new run, which meshes first.")
+                        status = "cancelled"
+                    else:
+                        diag = Diagnostic(code="mesh.failed", category=ErrorCategory.MESH, summary="Meshing failed, so the run could not start.",
+                                          action="Open the Mesh page for the meshing diagnostics.")
+                        status = "failed"
+                    self.db.update("runs", "id", j["target_id"], {"status": status, "diagnostics_json": [diag.model_dump(mode="json")]})
                 report["cancelled"].append(j["id"])
                 continue
             if dep == "wait":

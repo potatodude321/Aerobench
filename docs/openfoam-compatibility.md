@@ -6,7 +6,7 @@
 |---|---|---|
 | **OpenCFD OpenFOAM v2606, native Windows** (MinGW build + MS-MPI) | Primary target, **bundled** | Ships in the AeroBench installer (ADR-0010) and is used by default; a separately installed copy can be selected. Verified layout and behaviour from the official installer (ADR-0002); serial pipeline and graceful stop tested with the real Windows binaries under Wine (`test_native_windows_wine.py`). Parallel (MS-MPI) needs a Windows test machine. |
 | OpenCFD OpenFOAM v2606, Linux (`openfoam2606` packages) | Supported, continuously tested | Development and CI target; the integration suite runs the full pipeline against it. |
-| OpenCFD OpenFOAM v2606 inside WSL2 | Supported (advanced) | Staged execution in the WSL file system (fast, no space-in-path issue). |
+| OpenCFD OpenFOAM v2606 inside WSL2 | Removed (0.1.0 build 3) | The included native Windows build is the supported path; WSL may return once Windows is mature. |
 | Other OpenCFD releases (v2312 … v2512) | Expected to work | Same dictionary dialect; the version is recorded with every run. Not part of the regression suite. |
 | OpenFOAM Foundation v13/v14 | **Experimental adapter** | Disabled unless "allow experimental adapters" is set. Golden files document the output; not validated. |
 | Remote Linux / HPC | Interface defined | Provider and staging model in place; transport (SSH/scheduler) to be completed (roadmap). |

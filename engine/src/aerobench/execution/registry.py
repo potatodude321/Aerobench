@@ -12,12 +12,10 @@ from .local_posix import LocalPosixProvider
 from .native_windows import NativeWindowsProvider
 from .provider import ExecutionProvider, is_windows
 from .remote import RemoteSSHProvider
-from .wsl import WSLProvider
 
 KINDS = {
     "native-windows": NativeWindowsProvider,
     "local-posix": LocalPosixProvider,
-    "wsl": WSLProvider,
     "remote-ssh": RemoteSSHProvider,
 }
 
@@ -27,14 +25,19 @@ def provider_from_dict(d: dict[str, Any]) -> ExecutionProvider:
     return cls(d.get("id", d["kind"]), d.get("config"))
 
 
+# WSL was removed in 0.1.0 build 3: the bundled native Windows OpenFOAM is the supported path.
+# Settings written by earlier builds may still name it; such entries are ignored.
+RETIRED_KINDS = {"wsl"}
+
+
 def default_providers(settings: Optional[dict[str, Any]] = None) -> list[ExecutionProvider]:
     """The providers this machine can offer, default first."""
     settings = settings or {}
-    configured = [provider_from_dict(p) for p in settings.get("providers", [])]
+    configured = [provider_from_dict(p) for p in settings.get("providers", []) if p.get("kind") in KINDS]
     if configured:
         return configured
     if is_windows():
-        return [NativeWindowsProvider("native", settings.get("native")), WSLProvider("wsl", settings.get("wsl"))]
+        return [NativeWindowsProvider("native", settings.get("native"))]
     return [LocalPosixProvider("local", settings.get("local"))]
 
 

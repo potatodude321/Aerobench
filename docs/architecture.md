@@ -20,7 +20,7 @@ AeroBench has three processes during normal use and one per running job:
         │ launches (detached)                      │ runs, reports        │
 ┌───────┴────────┐                                  └─────────────────────┘
 │ job runner     │──► OpenFOAM processes via an execution provider
-│ (one per job)  │    (native Windows + MS-MPI, WSL2, Linux, remote)
+│ (one per job)  │    (native Windows + MS-MPI, Linux, remote)
 └────────────────┘
 ```
 
@@ -76,7 +76,7 @@ Every user action follows the same path (BUILD_SPEC "pipeline"):
 | `foam` | Dictionary AST/parser/writer, fork adapters, case builder, log parsers and error classification |
 | `geometry` | Surface IO, CAD tessellation, diagnostics, repair, components, frontal area, pose, deformation |
 | `meshing` | Domain sizing, refinement regions, boundary-layer design |
-| `execution` | Providers (native Windows, WSL, local POSIX, remote) and detection |
+| `execution` | Providers (native Windows, local POSIX, remote) and detection |
 | `jobs` | Job specs, runner, manager, worker |
 | `results`, `monitoring` | Ingestion and convergence assessment |
 | `viz` | ParaView detection, sidecar client/server, presets, binary payloads |

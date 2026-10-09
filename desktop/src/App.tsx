@@ -96,7 +96,8 @@ function stepStates(project: ProjectPayload, activeJobs: any[], hasResults: bool
   const hasGeo = !!project.config.geometry.revision_id;
   const errs = (re: RegExp) => project.validation.filter((v) => v.severity === "error" && re.test(v.path)).length;
   const meshJobs = activeJobs.filter((j) => j.kind === "mesh").length;
-  const runJobs = activeJobs.filter((j) => j.kind !== "mesh").length;
+  const runJobs = activeJobs.filter((j) => j.kind !== "mesh" && j.status !== "queued").length;
+  const queuedRuns = activeJobs.filter((j) => j.kind !== "mesh" && j.status === "queued").length;
   const out: Record<string, { state: StepState; note?: string; tip: string }> = {};
   out.geometry = hasGeo ? { state: "done", tip: "Vehicle imported" } : { state: "todo", note: "Start here", tip: "Import the vehicle surface" };
   const t = errs(/^tunnel/);
@@ -110,7 +111,8 @@ function stepStates(project: ProjectPayload, activeJobs: any[], hasResults: bool
   const ph = errs(/^(physics|operating|numerics)/);
   out.physics = !hasGeo ? { state: "todo", tip: "Set up after importing the vehicle" } : ph ? { state: "issue", note: `${ph} issue${ph > 1 ? "s" : ""}`, tip: "Setup issues" } : { state: "done", tip: "Physics set" };
   const r = st.solve.state;
-  if (runJobs) out.run = { state: "running", note: `${runJobs} running`, tip: "Simulations in progress" };
+  if (runJobs) out.run = { state: "running", note: `${runJobs} running`, tip: queuedRuns ? `Simulations in progress; ${queuedRuns} more waiting` : "Simulations in progress" };
+  else if (queuedRuns) out.run = { state: "running", note: meshJobs ? "Waiting for mesh" : "Queued", tip: meshJobs ? "The run starts when the mesh is ready" : "The run starts when cores are free" };
   else if (r === "current") out.run = { state: "done", tip: "A finished run exists for the current settings" };
   else if (r === "stopped") out.run = { state: "done", note: "Stopped", tip: "The run for the current settings was stopped; it can be resumed" };
   else if (r === "failed") out.run = { state: "issue", note: "Failed", tip: "The run for the current settings failed; see the Run page" };
@@ -159,7 +161,11 @@ export default function App() {
             for (const r of ready) {
               if (r.kind === "solve") {
                 const run = useApp.getState().runs.find((x) => x.id === r.target_id);
-                if (run?.metrics) notifyOk(`Cd ${run.metrics.Cd?.toFixed(4) ?? "—"} — open the Results page to explore it.`, `Results ready: ${run.label}`);
+                if (run?.metrics) {
+                  // the Results page opens on the newest results unless the user is looking at it
+                  if (useApp.getState().section !== "results") useApp.getState().selectRun(run.id);
+                  notifyOk(`Cd ${run.metrics.Cd?.toFixed(4) ?? "—"} — open the Results page to explore it.`, `Results ready: ${run.label}`);
+                }
                 else if (run && ["failed", "cancelled"].includes(run.status)) notifyError(new Error("See the Run page for the reason."), `Run ${run.label} did not finish`);
               } else if (r.kind === "mesh" && r.status === "completed") {
                 notifyOk("Open the Mesh page to inspect it.", "Mesh ready");
@@ -203,7 +209,8 @@ export default function App() {
 
   if (!project) return <Welcome />;
 
-  const running = jobs.active.length;
+  const running = jobs.active.filter((j: any) => j.status !== "queued").length;
+  const queued = jobs.active.length - running;
   const hasResults = runs.some((r) => ["completed", "stopped", "interrupted"].includes(r.status) && r.metrics);
   const states = stepStates(project, jobs.active, hasResults);
   const errors = project.validation.filter((v) => v.severity === "error");
@@ -226,7 +233,8 @@ export default function App() {
               </span>
             </Tooltip>
           )}
-          <StatusDot tone={running ? "live" : "idle"} label={running ? `${running} job${running > 1 ? "s" : ""} running` : "Idle"} />
+          <StatusDot tone={running ? "live" : queued ? "warn" : "idle"}
+            label={[running && `${running} job${running > 1 ? "s" : ""} running`, queued && `${queued} waiting`].filter(Boolean).join(", ") || "Idle"} />
           <Switch size="xs" label="Expert" checked={expertMode} onChange={(e) => setExpert(e.currentTarget.checked)} />
         </div>
       </header>

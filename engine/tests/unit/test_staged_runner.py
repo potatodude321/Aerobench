@@ -1,4 +1,4 @@
-"""Staged execution (WSL / remote): the solver runs on a *copy* of the case.
+"""Staged execution (remote machines): the solver runs on a *copy* of the case.
 
 These tests drive the real job runner with a fake staged provider whose "remote" copy is
 a local directory, and check that host-side edits between solver steps reach the copy, that
@@ -19,7 +19,6 @@ import pytest
 
 from aerobench.execution import registry
 from aerobench.execution.provider import CommandSpec, ExecutionProvider, ProviderInfo, staged_case_key
-from aerobench.execution.wsl import WSLProvider
 from aerobench.jobs.runner import Runner
 from aerobench.jobs.spec import CopyStep, DictSetStep, FoamStep, JobSpec, JobStatus, RemoveStep, StageStep, read_state, write_model
 
@@ -262,26 +261,6 @@ def test_remove_step_handles_glob_characters_in_the_case_path(tmp_path, staged):
     assert not (case / "aerobenchStop").exists() and not (case / "processor0").exists()
 
 
-def test_stage_in_refuses_to_overwrite_newer_staged_results(tmp_path):
-    import subprocess
-
-    from aerobench.execution.wsl import newer_results_guard
-
-    host, staged_dir = tmp_path / "host case", tmp_path / "staged"
-    for d in (host / "0", host / "100", staged_dir / "0", staged_dir / "processor0" / "250"):
-        d.mkdir(parents=True)
-    frag = newer_results_guard(shlex.quote(str(host)), shlex.quote(str(staged_dir)))
-    r = subprocess.run(["bash", "-c", frag + " && echo OK"], capture_output=True, text=True)
-    assert r.returncode == 3 and "250" in r.stderr and "100" in r.stderr
-    (host / "250").mkdir()
-    r = subprocess.run(["bash", "-c", frag + " && echo OK"], capture_output=True, text=True)
-    assert r.returncode == 0 and r.stdout.strip() == "OK"
-    # nothing staged yet, or no time directories at all: fine
-    r = subprocess.run(["bash", "-c", newer_results_guard(shlex.quote(str(host)), shlex.quote(str(tmp_path / "none"))) + " && echo OK"],
-                       capture_output=True, text=True)
-    assert r.stdout.strip() == "OK"
-
-
 def test_failed_stage_in_is_not_copied_back(tmp_path, staged):
     case, provider, remote = staged
     provider.config["helper"] = str(tmp_path / "missing-helper.py")  # every staging command fails
@@ -311,38 +290,6 @@ def test_resumed_job_knows_the_copy_is_live(tmp_path, staged):
     assert Runner(job_dir).run() == 0
     assert (remote / "seen.txt").read_text().startswith("2 ")
     assert (case / "2" / "U").exists()
-
-
-def test_wsl_commands_quote_paths_and_reject_escapes(tmp_path):
-    p = WSLProvider("wsl", {"distro": "Ubuntu"})
-    case = Path("E:/OpenFOAM GUI/My car's project/runs/run-7")
-    key = staged_case_key(case)
-    assert key.startswith("runs/run-7-") and " " not in key and "'" not in key
-    for spec in (p.stage_in(case), p.stage_out(case), p.push_files(case, ["system/fvSchemes"]),
-                 p.remove_paths(case, ["processor*", "aerobenchStop"]), p.write_file(case, "aerobenchStop", "action=writeNow\n"),
-                 p.command(["simpleFoam"], case, 4)):
-        # --exec: WSL passes the arguments to bash verbatim; plain "--" would hand the raw command
-        # line to the default shell, which expands $... and backticks before bash runs
-        assert spec.argv[:6] == ["wsl.exe", "-d", "Ubuntu", "--exec", "bash", "-c"] and len(spec.argv) == 7
-        script = spec.argv[-1]
-        shlex.split(script)  # well-formed for the shell
-        import subprocess
-
-        assert subprocess.run(["bash", "-n", "-c", script]).returncode == 0  # valid bash syntax
-        assert '"$HOME"/' in script
-        assert "$PWD" not in script
-    assert "'/mnt/e/OpenFOAM GUI/My car'\"'\"'s project/runs/run-7'" in p.stage_in(case).argv[-1]
-    assert "pipefail" in p.stage_out(case).argv[-1]
-    assert "-case \"$HOME\"/" in p.command(["simpleFoam"], case, 4).argv[-1]
-    assert "exit 3" in p.stage_in(case).argv[-1]  # newer staged results are never overwritten
-    with pytest.raises(ValueError):
-        p.push_files(case, ["../../etc/passwd"])
-    with pytest.raises(ValueError):
-        p.remove_paths(case, ["*; rm -rf ~"])
-    with pytest.raises(ValueError):
-        p.write_file(case, "/tmp/x", "")
-    # distinct host cases never share a staged directory
-    assert staged_case_key(Path("E:/a/runs/run-1")) != staged_case_key(Path("E:/b/runs/run-1"))
 
 
 def test_resume_steps_decompose_after_stage_in():

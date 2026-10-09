@@ -83,8 +83,9 @@ export function LogsPage() {
   const stop = async () => {
     if (!sel) return;
     try {
-      await api.post(`/api/p/${pid()}/jobs/${sel}/stop`, { force: selRow?.kind !== "solve" });
-      notifyOk(selRow?.kind === "solve" ? "Stop requested — the solver writes its current state and exits." : "Cancelling.");
+      const graceful = selRow?.kind === "solve" && selRow?.status !== "queued";
+      await api.post(`/api/p/${pid()}/jobs/${sel}/stop`, { force: !graceful });
+      notifyOk(graceful ? "Stop requested — the solver writes its current state and exits." : "Cancelling.");
     } catch (e) {
       notifyError(e);
     }
@@ -126,7 +127,12 @@ export function LogsPage() {
                   {KIND_WORDS[selRow?.kind] || selRow?.kind} {selRow?.target_id}
                 </Text>
                 <StatusBadge status={selRow?.status} />
-                {running && prog && (
+                {selRow?.status === "queued" && (
+                  <Text size="xs" c="dimmed">
+                    {selRow.depends_on ? "Starts when the mesh it needs is ready" : "Starts when cores are free"}
+                  </Text>
+                )}
+                {running && selRow?.status !== "queued" && prog?.step_count > 0 && (
                   <Text size="xs" c="dimmed">
                     {prog.phase || prog.step} · step {prog.step_index + 1} of {prog.step_count}
                     {prog.elapsed_seconds != null && ` · ${formatDuration(prog.elapsed_seconds)} so far`}
@@ -134,15 +140,15 @@ export function LogsPage() {
                 )}
               </Group>
               {running && (
-                <Tooltip label={selRow?.kind === "solve" ? "The solver writes its current state, so the run can be resumed" : "Ends the job now"}>
+                <Tooltip label={selRow?.status === "queued" ? "The job will not start" : selRow?.kind === "solve" ? "The solver writes its current state, so the run can be resumed" : "Ends the job now"}>
                   <Button size="xs" variant="default" leftSection={<IconPlayerStop size={14} />} onClick={stop}>
-                    {selRow?.kind === "solve" ? "Stop and save" : "Cancel"}
+                    {selRow?.kind === "solve" && selRow?.status !== "queued" ? "Stop and save" : "Cancel"}
                   </Button>
                 </Tooltip>
               )}
             </Group>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-              {running && (
+              {running && selRow?.status !== "queued" && (
                 <Button size="compact-xs" variant={followLive ? "light" : "subtle"} color={followLive ? "ice" : "gray"} onClick={() => setStep(null)}>
                   <StatusDot tone="live" label="Live" />
                 </Button>
@@ -162,7 +168,8 @@ export function LogsPage() {
               </Text>
             )}
             <DiagnosticList items={stepDiag} />
-            {sel && (
+            {sel && selRow?.status === "queued" && <Hint>Output appears here as soon as the job starts.</Hint>}
+            {sel && selRow?.status !== "queued" && (
               <LiveLog key={`${sel}:${followLive ? "live" : shownStep}`} jobId={sel} live={followLive} step={followLive ? null : shownStep} style={{ flex: 1 }} />
             )}
           </>

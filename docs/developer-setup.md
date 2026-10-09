@@ -7,7 +7,7 @@
 | Python | 3.11 – 3.13 | Engine; 3.12 recommended on Windows (embedded build used for packaging) |
 | Node.js | 20 LTS or newer | Desktop shell (Electron 44, Vite 8, TypeScript 5.9) |
 | Git | any | |
-| OpenFOAM | OpenCFD v2606 | Windows installer, `openfoam2606` on Ubuntu/Debian, or inside WSL2 |
+| OpenFOAM | OpenCFD v2606 | Windows installer (bundled) or `openfoam2606` on Ubuntu/Debian |
 | Microsoft MPI | 10.x | **Windows only, required even for serial OpenFOAM runs** |
 | ParaView | 6.2 | Optional for development; needed for visualisation tests |
 

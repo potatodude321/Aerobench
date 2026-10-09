@@ -15,7 +15,7 @@ distribution reviewed before release.
 | OpenFOAM v2606 for Windows (OpenCFD MinGW build) | GPL-3.0-or-later | **yes**, in the installer (`resources\openfoam`) | Meshing and solving |
 | Microsoft MPI 10.1.3 | MIT; "installers for MS-MPI may be redistributed with your own applications" | **yes**, its installer (`resources\redist`), run silently by the setup | Required by the Windows OpenFOAM build |
 | ParaView 6.2.0 / pvpython (Kitware) | BSD-3-Clause + licences of its bundled libraries (incl. Qt 6, LGPL-3.0) | **yes** (`resources\ParaView-6.2.0`) | Post-processing sidecar, images, *Open in ParaView* |
-| OpenFOAM in WSL2 / Linux, Open MPI | GPL-3.0 / BSD-3-Clause-style | no (user-installed) | Alternative execution environments |
+| OpenFOAM on Linux, Open MPI | GPL-3.0 / BSD-3-Clause-style | no (user-installed) | Alternative execution environments |
 | Gmsh (optional) | GPL-2.0-or-later | no | Alternative CAD tessellation, executed as an external program only |
 
 ### Obligations that come with shipping them

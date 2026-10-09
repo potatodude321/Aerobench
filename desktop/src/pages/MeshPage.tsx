@@ -631,11 +631,11 @@ export function MeshPage() {
       <Group gap={8} align="flex-end" wrap="nowrap">
         <NumberInput size="xs" w={78} label="Cores" min={1} max={maxCores} value={cores}
           onChange={(v) => typeof v === "number" && v >= 1 && patchConfig({ execution: { n_procs: Math.max(1, Math.min(maxCores, Math.round(v))) } })} />
-        <Button style={{ flex: 1 }} leftSection={<IconGridDots size={15} />} loading={busy} onClick={() => generate(false)} disabled={!plan}>
-          Generate mesh
+        <Button style={{ flex: 1 }} leftSection={<IconGridDots size={15} />} loading={busy} onClick={() => generate(false)} disabled={!plan || (meshRunning && forCurrent)}>
+          {meshRunning && forCurrent ? "Meshing…" : "Generate mesh"}
         </Button>
         <Tooltip label="Mesh again even if a mesh for these settings exists">
-          <Button variant="default" px={10} onClick={() => generate(true)} aria-label="Mesh again">
+          <Button variant="default" px={10} onClick={() => generate(true)} aria-label="Mesh again" disabled={meshRunning && forCurrent}>
             <IconRefresh size={15} />
           </Button>
         </Tooltip>

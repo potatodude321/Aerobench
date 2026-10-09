@@ -166,7 +166,7 @@ function RunMonitor({ runId, jobs, onResults }: { runId: string; jobs: any; onRe
   const stop = async (force: boolean) => {
     try {
       await api.post(`/api/p/${pid()}/runs/${runId}/stop`, { force });
-      notifyOk(force ? "Killing the solver." : "Stop requested — the solver will write the current state and exit.");
+      notifyOk(run?.status === "queued" ? "Run cancelled." : force ? "Killing the solver." : "Stop requested — the solver will write the current state and exit.");
       load();
     } catch (e) {
       notifyError(e);
@@ -215,7 +215,14 @@ function RunMonitor({ runId, jobs, onResults }: { runId: string; jobs: any; onRe
             {run.convergence && <StatusBadge status={run.convergence.status} />}
           </Group>
           <Group gap={6} wrap="nowrap">
-            {live && (
+            {run.status === "queued" && (
+              <Tooltip label={waiting ? "The run will not start; the mesh is still generated" : "The run will not start"}>
+                <Button size="xs" variant="default" leftSection={<IconPlayerStop size={14} />} onClick={() => stop(true)}>
+                  Cancel run
+                </Button>
+              </Tooltip>
+            )}
+            {live && run.status !== "queued" && (
               <>
                 <Button size="xs" variant="default" leftSection={<IconPlayerStop size={14} />} onClick={() => stop(false)}>
                   Stop and save
@@ -321,13 +328,13 @@ function RunMonitor({ runId, jobs, onResults }: { runId: string; jobs: any; onRe
                 {conv.summary}
               </Text>
               {prog?.stop_when_converged && live && <Hint style={{ marginBottom: 6 }}>This run stops by itself once every criterion is met.</Hint>}
-              <Table className="compact" withRowBorders={false}>
+              {conv.criteria?.length > 0 && <Table className="compact" withRowBorders={false}>
                 <Table.Thead>
                   <Table.Tr>
                     <Table.Th>Criterion</Table.Th>
                     <Table.Th>Now</Table.Th>
                     <Table.Th>Target</Table.Th>
-                    <Table.Th w={150} />
+                    <Table.Th w={130} />
                     <Table.Th />
                   </Table.Tr>
                 </Table.Thead>
@@ -339,9 +346,15 @@ function RunMonitor({ runId, jobs, onResults }: { runId: string; jobs: any; onRe
                       <Table.Tr key={i}>
                         <Table.Td>{c.name}</Table.Td>
                         <Table.Td>{fmt(c.value, 4)}</Table.Td>
-                        <Table.Td>
+                        <Table.Td style={{ whiteSpace: "nowrap" }}>
                           {higherIsBetter ? "≥ " : "≤ "}
-                          {fmt(c.threshold, 4)} {c.note}
+                          {fmt(c.threshold, 4)}
+                          {c.note && (
+                            <Text span size="xs" c="dimmed">
+                              {" "}
+                              {c.note}
+                            </Text>
+                          )}
                         </Table.Td>
                         <Table.Td>
                           <Progress size="xs" value={Math.min(100, 100 * ratio)} color={c.passed ? "teal" : "yellow"} />
@@ -351,7 +364,7 @@ function RunMonitor({ runId, jobs, onResults }: { runId: string; jobs: any; onRe
                     );
                   })}
                 </Table.Tbody>
-              </Table>
+              </Table>}
             </div>
           )}
           <div style={{ marginTop: 14, maxWidth: 900 }}>

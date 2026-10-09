@@ -18,7 +18,8 @@ memory. If Microsoft MPI is missing (for example removed later), it offers **Ins
 Microsoft MPI**.
 
 Advanced alternatives (Settings → Solver): your own OpenFOAM v2606 installation, OpenFOAM
-inside WSL2, or a Linux workstation with `openfoam2606` installed.
+or a Linux workstation with `openfoam2606` installed. (WSL is no longer offered: the included
+Windows build is the supported path.)
 
 ## 2. Create a project
 

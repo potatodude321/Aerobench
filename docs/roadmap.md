@@ -1,6 +1,6 @@
 # Roadmap
 
-Status as of version 0.1.0 (2026-10). Everything listed under "Delivered" is implemented,
+Status as of version 0.2.0 (2026-10). Everything listed under "Delivered" is implemented,
 tested and documented; later items are ordered by engineering value.
 
 ## Delivered (0.1.0)
@@ -12,13 +12,28 @@ tested and documented; later items are ordered by engineering value.
   components and wheel detection, frontal area, pose.
 * Virtual wind tunnel, mesh planning (snappyHexMesh, layers for a target y+), steady RANS with
   moving ground, rotating wheels and yaw; versioned numerics presets.
-* Execution providers: native Windows (v2606 + MS-MPI), Linux; detached crash-safe jobs. (WSL2 removed in build 3, may return.)
+* Execution providers: native Windows (v2606 + MS-MPI), Linux; detached crash-safe jobs.
 * Results with explicit conventions, convergence assessment, ParaView 6.2 sidecar, compare.
 * Studies, optimisation (GP-BO, NSGA-II, Nelder–Mead, space-filling), geometry
   parameterisation (rigid, FFD, RBF) with validity checks, GCI mesh sensitivity.
 * Reports (HTML/CSV/PDF), validation benchmarks (Ahmed body), CLI.
 
-## Next (0.2)
+## Delivered (0.2.0)
+
+* Aero element projects (a wing, flap or splitter alone, in free stream or ground effect)
+  and their **structural check** with CalculiX: loads from a run on the same surface, sheet
+  and composite sections, built-in and user materials, supports, Tsai-Wu / maximum-stress
+  ply failure, deflection and reserve-factor maps (ADR-0012).
+* **Shape zones** for optimisation with movement heat maps and a baseline ↔ changed slider
+  (ADR-0013); per-design shape view in optimisations.
+* Ready-to-run demos (Ahmed body; front wing with its structural check) with guides.
+* Live logs for every job, cancellable meshing, time left and convergence criteria with the
+  current values during runs, automatic stop once converged, results read and announced as
+  soon as a run ends; no false "settings changed" states.
+* The setup updates an installation in place, keeping unchanged components (ADR-0011). WSL
+  removed: the bundled Windows build is the supported path.
+
+## Next (0.3)
 
 1. **Validation records on Windows.** Run `aerobench benchmark` (Ahmed 25°/35°, medium and
    fine) on reference Windows workstations and publish the JSON records with each release.
@@ -47,6 +62,9 @@ tested and documented; later items are ordered by engineering value.
   (deliberately absent from this master build).
 * Native code signing and auto-update channel.
 
+* Structural check: buckling, modal analysis (flutter margins) and progressive ply damage;
+  solid inserts and bonded joints; loads from several runs combined into load cases.
+
 ## Known limitations
 
 * Steady RANS only; strongly separated or unsteady flows carry model error, and their force
@@ -57,3 +75,4 @@ tested and documented; later items are ordered by engineering value.
   degrade triangle quality (warned).
 * GCI is reported for studies that vary only the background cell size.
 * Linux: parallel runs require project paths without spaces (OpenFOAM restriction).
+* The structural check is linear static and shell-only with first-ply failure (ADR-0012).

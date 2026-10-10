@@ -1,10 +1,10 @@
 # Third-party components and data
 
-AeroBench is proprietary. It **does not link to** OpenFOAM, ParaView, MPI or Gmsh: they run
-as separate programs that exchange files and pipes with AeroBench (aggregation, not a combined
-work). The Windows installer **redistributes** OpenFOAM, ParaView and the Microsoft MPI
-installer unmodified (ParaView minus two optional parts), which carries obligations listed
-below. Libraries that are linked into AeroBench are permissively licensed (or LGPL,
+AeroBench is proprietary. It **does not link to** OpenFOAM, ParaView, MPI, CalculiX or Gmsh:
+they run as separate programs that exchange files and pipes with AeroBench (aggregation, not a
+combined work). The Windows installer **redistributes** OpenFOAM, ParaView, CalculiX and the
+Microsoft MPI installer unmodified (ParaView minus two optional parts), which carries
+obligations listed below. Libraries that are linked into AeroBench are permissively licensed (or LGPL,
 dynamically loaded). This page is an engineering inventory, not legal advice — have the
 distribution reviewed before release.
 
@@ -15,6 +15,7 @@ distribution reviewed before release.
 | OpenFOAM v2606 for Windows (OpenCFD MinGW build) | GPL-3.0-or-later | **yes**, in the installer (`resources\openfoam`) | Meshing and solving |
 | Microsoft MPI 10.1.3 | MIT; "installers for MS-MPI may be redistributed with your own applications" | **yes**, its installer (`resources\redist`), run silently by the setup | Required by the Windows OpenFOAM build |
 | ParaView 6.2.0 / pvpython (Kitware) | BSD-3-Clause + licences of its bundled libraries (incl. Qt 6, LGPL-3.0) | **yes** (`resources\ParaView-6.2.0`) | Post-processing sidecar, images, *Open in ParaView* |
+| CalculiX CrunchiX 2.23 (G. Dhondt), conda-forge Windows build | GPL-2.0-or-later; runtime DLLs see below | **yes** (`resources\calculix`) | Structural check of aero elements (linear static shells) |
 | OpenFOAM on Linux, Open MPI | GPL-3.0 / BSD-3-Clause-style | no (user-installed) | Alternative execution environments |
 | Gmsh (optional) | GPL-2.0-or-later | no | Alternative CAD tessellation, executed as an external program only |
 
@@ -33,6 +34,16 @@ distribution reviewed before release.
   Removed from Kitware's package: the NVIDIA IndeX plugin and its 290 MB library (needs an
   NVIDIA IndeX licence and GPU) and the `uv` tool. Identical duplicate DLLs are removed from
   the package and recreated as hard links at install time, restoring Kitware's layout.
+* **CalculiX (GPL-2.0-or-later)** — `ccx.exe` is the conda-forge build (package and every
+  runtime DLL pinned by SHA-256 in `packaging/prepare_calculix.py`), with SPOOLES (public
+  domain) linked in. The installer carries the licence texts of every package in
+  `resources\licenses\calculix\<package>`. The build writes the Corresponding Source to
+  `packaging\build\sources\calculix` (upstream `ccx_2.23.src.tar.bz2`, SHA-256 pinned, and
+  `SOURCE.txt` naming the conda-forge recipe used for the Windows build); **publish it next to
+  every installer download** (GPL-2.0 §3). Runtime DLLs shipped with it: ARPACK-NG
+  (BSD-3-Clause), OpenBLAS with its BLAS/LAPACK interfaces (BSD-3-Clause), the GCC runtime
+  (libgcc_s, libgfortran, libgomp: GPL-3.0 with the GCC Runtime Library Exception;
+  libquadmath: LGPL-2.1-or-later, dynamically loaded) and winpthreads (MIT and BSD-style).
 * **Microsoft MPI** — the official redistributable installer, MIT licence and MPICH
   copyright in `resources\licenses\MS-MPI`. MS-MPI remains installed when AeroBench is
   uninstalled (shared system component).

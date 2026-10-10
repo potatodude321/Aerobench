@@ -92,8 +92,28 @@ design; stored in the CFD frame with an identity transform and cached by a conte
 * `GeometryParameter` — id, name, units, bounds, baseline, affected and frozen components,
   deformation (`translate`, `rotate`, `ffd`, `rbf`), displacement limit, centreline symmetry.
 
+* `ShapeZone` — id, name, preset, box, blend distance, parts, moves (`z`, `x` or `width`,
+  largest movement in mm, 1–3 sections along the flow), centreline symmetry, enabled. Each
+  enabled move creates geometry parameters `<zone>_<dir>[k]` (ADR-0013).
+
 When a study starts, the definition and the **complete base configuration** are frozen in
 the `studies` table, so later edits to the project never change a running study.
+
+## Aero elements and the structural check
+
+* `application` — `vehicle` or `aero_element` (a wing, flap or splitter studied alone).
+* `ElementConfig` — environment (free stream or ground effect), ground clearance (m), angle
+  (°, trailing edge up), height in chords for free stream. Applied through the vehicle pose
+  (rake, ride-height offset) by `services/element.py`.
+* `StructureConfig` — model (skin or plate, plate side), analysed parts, sections, supports,
+  project materials, the run whose loads are applied, design speed, load factor,
+  self-weight and gravity, required reserve factor, element limit.
+* `Section` — sheet (material, thickness) or laminate (plies outer-first: material,
+  thickness, angle; symmetric; 0° direction); `Support` — box, sphere or cylinder; `Material`
+  — isotropic (E, ν, yield, ultimate, density) or lamina (E1, E2, G12, ν12, optional
+  out-of-plane constants, Xt, Xc, Yt, Yc, S12, ply thickness, density).
+* Structural checks are stored in the `structure_runs` table with a snapshot of the settings
+  and materials used, the summary and the job (ADR-0012).
 
 ## Runs
 

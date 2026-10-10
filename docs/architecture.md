@@ -81,8 +81,9 @@ Every user action follows the same path (BUILD_SPEC "pipeline"):
 | `results`, `monitoring` | Ingestion and convergence assessment |
 | `viz` | ParaView detection, sidecar client/server, presets, binary payloads |
 | `studies`, `optimisation` | Design space, DOE, design evaluation, driver, ask/tell optimisers, GP |
+| `structures` | Structural check of aero elements: shell mesh from the CFD surface (shape-preserving refinement), load mapping, CalculiX deck and shell-expansion check, results and failure criteria, material library |
 | `validation` | Benchmarks, grid convergence index |
-| `services` | Use cases called by the API (geometry, mesh, runs, viz, compare, studies, reports) |
+| `services` | Use cases called by the API (geometry, mesh, runs, viz, compare, studies, shape zones, aero element setup, structures, demos, reports) |
 | `api` | FastAPI app, routes, WebSocket event stream, server entry point |
 
 ## Desktop

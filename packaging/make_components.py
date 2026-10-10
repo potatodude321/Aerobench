@@ -3,7 +3,8 @@ setup can update an existing installation in place (see components.py).
 
     python packaging/make_components.py [--build packaging/build] [--sevenzip PATH]
 
-Run after prepare_thirdparty.py and prepare_python.py, before electron-builder. Writes
+Run after prepare_thirdparty.py, prepare_calculix.py and prepare_python.py, before
+electron-builder. Writes
 
     packaging/build/components/archives/<name>-<id>.7z      embedded by the setup
     packaging/build/components/tools/components.py         installed as resources/tools/
@@ -63,6 +64,9 @@ def build(args: argparse.Namespace) -> int:
          of_key.relative_to(b / "bundle" / "openfoam").as_posix()),
         ("paraview", b / "bundle" / pv_dir, pv_dir, f"ParaView {comps['paraview']['version']}", "bin/pvpython.exe"),
     ]
+    if "calculix" not in comps:
+        sys.exit("CalculiX is missing from the bundle: run prepare_calculix.py first")
+    specs.append(("calculix", b / "bundle" / "calculix", "calculix", f"CalculiX {comps['calculix']['version']}", "ccx.exe"))
     out = b / "components"
     arch_dir, tools_dir = out / "archives", out / "tools"
     man_dir = tools_dir / "components"

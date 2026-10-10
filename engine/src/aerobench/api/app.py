@@ -123,10 +123,11 @@ def create_app(ctx: Optional[AppContext] = None, token: str = "", dev_cors: bool
     from .routes_expert import router as expert
     from .routes_geometry import router as geometry
     from .routes_runs import router as runs
+    from .routes_structures import router as structures
     from .routes_viz import router as viz
     from .ws import router as ws
 
-    for r in (core, geometry, runs, viz, expert, explore, ws):
+    for r in (core, geometry, runs, viz, expert, explore, structures, ws):
         app.include_router(r)
 
     if static_dir and Path(static_dir).is_dir():

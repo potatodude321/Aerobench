@@ -88,10 +88,18 @@ def identify_and_derive(project: Project, identify: bool = True) -> dict[str, An
         def mutate(c: ProjectConfig) -> None:
             c.geometry.components = res.components
             c.vehicle.wheels = res.wheels
-            if not res.wheels and any(comp.role == ComponentRole.STILT for comp in res.components):
+            if c.application == "aero_element":
+                # an element alone has no wheels: round parts found in it are ordinary parts
+                c.vehicle.wheels = []
+                c.geometry.components = [comp.model_copy(update={"role": ComponentRole.OTHER, "wheel_position": None})
+                                         if comp.role == ComponentRole.WHEEL else comp for comp in c.geometry.components]
+            elif not res.wheels and any(comp.role == ComponentRole.STILT for comp in res.components):
                 c.vehicle.category = VehicleCategory.BLUFF_BODY
 
         project.update(mutate, snapshot=False)
+    from .element import refresh_element_pose
+
+    refresh_element_pose(project)
     derived = refresh_derived(project)
     derived["notes"] = notes
     derived["components"] = [c.model_dump(mode="json") for c in project.config.geometry.components]
@@ -134,6 +142,8 @@ def refresh_derived(project: Project, resolution: int = 1000) -> dict[str, Any]:
         v0 = pa.origin[1]
         rows = np.arange(pa.mask.shape[1]) * h + v0 + 0.5 * h
         area = float(pa.mask[:, rows > z0].sum()) * h * h
+    # planform: the outline seen from above (reference area of wings and splitters)
+    planform = projected_area(merged, (0.0, 0.0, 1.0), resolution=resolution).area
     wb = cfg.vehicle.wheelbase
     changes: list[str] = []
     if wb is not None and wb <= 0:
@@ -145,7 +155,7 @@ def refresh_derived(project: Project, resolution: int = 1000) -> dict[str, Any]:
     L = float(hi[0] - lo[0])
     out = {
         "bbox_min": lo.tolist(), "bbox_max": hi.tolist(), "length": L, "width": float(hi[1] - lo[1]),
-        "height": float(hi[2] - z0), "ground_z": z0, "ground": ext["ground"], "frontal_area": area,
+        "height": float(hi[2] - z0), "ground_z": z0, "ground": ext["ground"], "frontal_area": area, "planform_area": planform,
         "frontal_area_uncertainty": pa.uncertainty, "frontal_area_pixel": pa.pixel_size, "wheelbase": wb,
         "body_clearance": ext["clearance"], "component_areas": ext["areas"],
     }
@@ -157,14 +167,17 @@ def refresh_derived(project: Project, resolution: int = 1000) -> dict[str, Any]:
         )
         ref = c.reference
         ref.area_computed = area
+        ref.area_planform_computed = planform
         ref.area_computed_resolution = pa.pixel_size
+        computed = planform if ref.area_source == AreaSource.COMPUTED_PLANFORM else area
         if ref.locked:
-            if ref.area_source == AreaSource.COMPUTED_FRONTAL and ref.area and abs(ref.area - area) > 1e-3 * ref.area:
-                changes.append(f"Computed frontal area is now {area:.4f} m² but the reference area stays {ref.area:.4f} m² "
+            if ref.area_source != AreaSource.MANUAL and ref.area and abs(ref.area - computed) > 1e-3 * ref.area:
+                kind = "planform" if ref.area_source == AreaSource.COMPUTED_PLANFORM else "frontal"
+                changes.append(f"Computed {kind} area is now {computed:.4f} m² but the reference area stays {ref.area:.4f} m² "
                                "because results exist (change it explicitly to recompute coefficients).")
             return
-        if ref.area_source == AreaSource.COMPUTED_FRONTAL or ref.area is None:
-            ref.area = area
+        if ref.area_source != AreaSource.MANUAL or ref.area is None:
+            ref.area = computed
         if ref.length_source in ("wheelbase", "vehicle_length") or ref.length is None:
             if wb:
                 ref.length = wb

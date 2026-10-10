@@ -4,7 +4,7 @@
 ;
 ; Layout of the installation's resources folder
 ;   app.asar, engine\, tools\, redist\, licenses\   the application: replaced by every setup
-;   python\, openfoam\, ParaView-6.2.0\               components: large and rarely changing.
+;   python\, openfoam\, ParaView-6.2.0\, calculix\    components: large and rarely changing.
 ;       Each is embedded as its own archive with a content id (packaging/make_components.py)
 ;       and carries a marker file with that id once installed. A setup replaces a component
 ;       only when its id differs, so an update keeps gigabytes of unchanged files in place.
@@ -85,6 +85,7 @@ Function AB_RemoveAppFiles
     ${AndIf} $R2 != "${AB_PYTHON_DIR}"
     ${AndIf} $R2 != "${AB_OPENFOAM_DIR}"
     ${AndIf} $R2 != "${AB_PARAVIEW_DIR}"
+    ${AndIf} $R2 != "${AB_CALCULIX_DIR}"
       ${If} ${FileExists} "$INSTDIR\resources\$R2\*.*"
         RMDir /r "$INSTDIR\resources\$R2"
       ${Else}
@@ -253,6 +254,9 @@ FunctionEnd
     MessageBox MB_ICONEXCLAMATION|MB_OK "Some ParaView files could not be restored (code $0).$\r$\nAeroBench works, but if result images fail, run this setup again to repair the installation." /SD IDOK
   ${EndIf}
   !insertmacro AB_Mark "${AB_PARAVIEW_DIR}" "${AB_PARAVIEW_ID}"
+
+  !insertmacro AB_Component calculix "${AB_CALCULIX_DIR}" "${AB_CALCULIX_ID}" "${AB_CALCULIX_ARCHIVE}" "${AB_CALCULIX_LABEL}" "${AB_CALCULIX_KEY}"
+  !insertmacro AB_Mark "${AB_CALCULIX_DIR}" "${AB_CALCULIX_ID}"
 
   ; --- 2. Microsoft MPI (needed by every OpenFOAM program of the Windows build) -----------
   ${IfNot} ${FileExists} "$PROGRAMFILES64\Microsoft MPI\Bin\mpiexec.exe"

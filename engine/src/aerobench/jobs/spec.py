@@ -81,7 +81,19 @@ class LinkMeshStep(BaseModel):
     optional: bool = False
 
 
-Step = Union[FoamStep, CopyStep, RemoveStep, DictSetStep, StageStep, LinkMeshStep]
+class ProgramStep(BaseModel):
+    """A program run on this computer in the case folder (e.g. the CalculiX solver). Success:
+    exit code 0 and, when given, ``success_text`` in its output."""
+
+    type: Literal["program"] = "program"
+    name: str
+    argv: list[str]
+    env: dict[str, str] = Field(default_factory=dict)
+    success_text: Optional[str] = None
+    optional: bool = False
+
+
+Step = Union[FoamStep, CopyStep, RemoveStep, DictSetStep, StageStep, LinkMeshStep, ProgramStep]
 
 
 class JobSpec(BaseModel):

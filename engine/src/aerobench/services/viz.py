@@ -111,6 +111,36 @@ class VizService:
         header = sc.request(op, out=str(out), **params)
         return {"key": key, "header": header, "cached": False}
 
+    # ------------------------------------------------------------------ structural analysis
+    def surface_loads(self, project: Project, run_id: str, patches: list[str]) -> tuple[Path, dict[str, Any]]:
+        """Wall pressure and shear per boundary face of ``patches`` (cached .npz)."""
+        r = run_record(project, run_id)
+        sig = case_signature(project.root / r["path"])
+        key = sha256_json({"run": run_id, "iterations": r.get("iterations"), "case": sig, "patches": sorted(patches), "v": 1})[:24]
+        out = project.cache_dir("structure", run_id) / f"loads-{key}.npz"
+        meta = out.with_suffix(".json")
+        if out.exists() and meta.exists():
+            import json as _json
+
+            return out, _json.loads(meta.read_text())
+        sc, _, _ = self._session(project, run_id)
+        info = sc.request("surface_loads", patches=patches, out=str(out))
+        import json as _json
+
+        meta.write_text(_json.dumps(info))
+        return out, info
+
+    def decimate(self, points, faces, regions, target: int, work: Path) -> tuple[Any, Any, Any]:
+        """Coarsen a surface to about ``target`` triangles (sidecar, VTK quadric decimation)."""
+        import numpy as np
+
+        src, dst = work / "decimate-in.npz", work / "decimate-out.npz"
+        np.savez(src, points=points, faces=faces, regions=regions)
+        sc = self.pool().get(f"decimate:{work}")
+        sc.request("decimate", **{"in": str(src), "out": str(dst), "target": int(target)})
+        d = np.load(dst)
+        return d["points"], d["faces"], d["regions"]
+
     # ------------------------------------------------------------------ generated mesh
     def _mesh_row(self, project: Project, mesh_id: str) -> dict[str, Any]:
         row = dec(project.db.one("SELECT * FROM mesh_revisions WHERE id = ?", (check_id(mesh_id, "mesh id"),)))

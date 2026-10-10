@@ -46,6 +46,21 @@ TEMPLATES: dict[str, dict[str, Any]] = {
         },
         "result_presets": ["cp_body", "underfloor_velocity", "diffuser_plane", "rear_wake", "q_wake"],
     },
+    "aero_element": {
+        "label": "Aero element (wing, splitter, flap)",
+        "description": "One element studied alone, in free stream or over a moving ground; planform reference area; "
+                       "structural check of the part with CalculiX under the computed loads.",
+        "config": {
+            "application": "aero_element",
+            "vehicle": {"category": "bluff_body"},
+            "operating": {"speed": 40.0, "yaw_deg": 0.0, "ground": "moving", "wheels_rotate": False},
+            "tunnel": {"preset": "custom", "upstream": 4.0, "downstream": 8.0, "lateral": 2.0, "top": 4.0},
+            "mesh": {"preset": "balanced", "layers": {"mode": "target_yplus", "target_yplus": 30.0}},
+            "numerics": {"preset": "balanced", "iterations": 1500},
+            "reference": {"area_source": "computed_planform", "length_source": "vehicle_length"},
+        },
+        "result_presets": ["cp_body", "centreline_cp", "rear_wake", "yplus_body"],
+    },
     "half_car": {
         "label": "Half-Car Symmetry",
         "description": "Symmetry plane at the centreline (zero yaw only) — half the cells, same drag/lift/balance.",

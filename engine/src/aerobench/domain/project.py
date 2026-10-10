@@ -19,6 +19,7 @@ from .mesh import MeshConfig
 from .numerics import NumericsConfig
 from .observables import ObservablesConfig
 from .setup import (
+    ElementConfig,
     OperatingCondition,
     PhysicsConfig,
     ReferenceValues,
@@ -27,6 +28,7 @@ from .setup import (
     TurbulenceModel,
     WallTreatment,
 )
+from .structure import StructureConfig
 from .vehicle import VehicleCategory, VehicleConfig
 
 SCHEMA_VERSION = 1
@@ -56,6 +58,8 @@ class ProjectConfig(Model):
     parameters: list[GeometryParameter] = Field(default_factory=list)
     parameter_values: dict[str, float] = Field(default_factory=dict, description="Current values of geometry parameters")
     zones: list[ShapeZone] = Field(default_factory=list, description="Shape zones; their parameters are generated into 'parameters'")
+    element: ElementConfig = Field(default_factory=ElementConfig, description="Aero element studied alone (application 'aero_element')")
+    structure: StructureConfig = Field(default_factory=StructureConfig, description="Structural check with CalculiX")
     studies: list[StudyDefinition] = Field(default_factory=list)
     optimisations: list[OptimisationDefinition] = Field(default_factory=list)
     notes: str = ""

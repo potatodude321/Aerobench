@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+from aerobench.core.errors import AeroBenchError
 from aerobench.domain.exploration import ShapeZone, ZoneDef
 from aerobench.domain.project import stage_hashes
 from aerobench.geometry.deform import apply_parameters, smootherstep, zone_displacement, zone_section, zone_window
@@ -137,6 +138,7 @@ def test_previews(proj):
     assert fh["scalar_units"] == "%" and sc.min() == 0.0 and sc.max() == pytest.approx(100.0)
     assert 0 < np.count_nonzero(sc) < len(sc) / 2
     # a zone with an unknown part is refused
-    with pytest.raises(Exception):
+    with pytest.raises(AeroBenchError) as e:
         zsvc.set_zones(p, [_zone(p, components=["nope"])])
+    assert e.value.diagnostic.code == "zones.component"
     assert ShapeZone.model_validate(_zone(p)).moves[0].direction == "z"

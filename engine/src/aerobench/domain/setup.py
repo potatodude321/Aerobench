@@ -42,6 +42,7 @@ class ForceAxes(str, Enum):
 
 class AreaSource(str, Enum):
     COMPUTED_FRONTAL = "computed_frontal"
+    COMPUTED_PLANFORM = "computed_planform"  # projected onto the ground plane (wings, splitters)
     MANUAL = "manual"
 
 
@@ -55,6 +56,7 @@ class ReferenceValues(Model):
     area: Optional[float] = Field(None, gt=0, description="Reference area (m²)")
     area_source: AreaSource = AreaSource.COMPUTED_FRONTAL
     area_computed: Optional[float] = Field(None, description="Last frontal-area computation (m²)")
+    area_planform_computed: Optional[float] = Field(None, description="Last planform-area computation (m²)")
     area_computed_resolution: Optional[float] = Field(None, description="Pixel size used (m)")
     length: Optional[float] = Field(None, gt=0, description="Reference length (m); default = wheelbase or vehicle length")
     length_source: str = "wheelbase"
@@ -159,3 +161,22 @@ class PhysicsConfig(Model):
     fluid: Fluid = Field(default_factory=Fluid)
     inlet_turbulence: InletTurbulence = Field(default_factory=InletTurbulence)
     wall_treatment: WallTreatment = WallTreatment.WALL_FUNCTIONS
+
+
+# --------------------------------------------------------------------------- aero element
+
+
+class ElementEnvironment(str, Enum):
+    FREE_STREAM = "free_stream"  # far from any ground (rear wing, flap studied alone)
+    GROUND_EFFECT = "ground_effect"  # at a given height over a moving ground (front wing, splitter)
+
+
+class ElementConfig(Model):
+    """Setup of an aero element studied alone (application 'aero_element'). The pose is
+    applied through the vehicle pose (rake = angle, ride-height offset = clearance), which
+    the setup service keeps consistent with these values."""
+
+    environment: ElementEnvironment = ElementEnvironment.FREE_STREAM
+    ground_clearance: float = Field(0.10, gt=0, le=10, description="Lowest point above the ground in ground effect (m)")
+    angle_deg: float = Field(0.0, ge=-45, le=45, description="Rotation about the span axis; + = trailing edge up")
+    free_stream_chords: float = Field(4.0, ge=2, le=20, description="Height above the ground in free stream, in chords")

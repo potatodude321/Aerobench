@@ -9,7 +9,6 @@ however the job ends (completed, stopped, failed).
 from __future__ import annotations
 
 import json
-import shlex
 import sys
 import threading
 import time

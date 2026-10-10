@@ -9,7 +9,7 @@ import type { Section } from "../state/store";
 const STEPS: { id: Section; label: string; text: string }[] = [
   { id: "geometry", label: "Geometry", text: "The Ahmed body is already imported: the body and its four stilts, nose upstream. Nothing to do here." },
   { id: "tunnel", label: "Tunnel", text: "A large tunnel over a stationary floor, as in the original experiment, so no blockage correction is needed." },
-  { id: "mesh", label: "Mesh", text: "A coarse mesh (about 0.3 million cells) with two named refinement regions over the rear slant and the near wake. Generate it here to inspect the cells, or go straight to Run, which meshes first." },
+  { id: "mesh", label: "Mesh", text: "A coarse mesh (about 0.3 million cells) with two extra refinement regions of the demo, “Rear slant and base” and “Wake behind the slant”. Generate it here to inspect the cells, or go straight to Run, which meshes first." },
   { id: "physics", label: "Physics", text: "40 m/s with the k-ω SST model. The run stops by itself once all convergence criteria are met (800 iterations at most)." },
   { id: "run", label: "Run", text: "Start the run and follow residuals, forces and the time left. Measured Cd is about 0.29; steady RANS on this coarse mesh usually gives 0.33 to 0.37." },
   { id: "results", label: "Results", text: "Pressure on the body and the wake behind it: the low pressure on the slant and the rear face is where most of the drag comes from." },

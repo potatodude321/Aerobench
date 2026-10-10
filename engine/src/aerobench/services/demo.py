@@ -43,7 +43,7 @@ def demo_regions() -> list[RefinementRegion]:
     return [
         RefinementRegion(id="demo_slant", name="Rear slant and base", kind=RegionKind.USER, auto=False, level=4,
                          shape=BoxShape(min=(0.78, -0.25, 0.03), max=(1.10, 0.25, 0.40))),
-        RefinementRegion(id="demo_wake", name="Near wake", kind=RegionKind.USER, auto=False, level=3,
+        RefinementRegion(id="demo_wake", name="Wake behind the slant", kind=RegionKind.USER, auto=False, level=3,
                          shape=BoxShape(min=(1.04, -0.28, 0.0), max=(1.60, 0.28, 0.40))),
     ]
 

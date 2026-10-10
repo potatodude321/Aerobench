@@ -33,6 +33,7 @@ from .spec import (
     JobState,
     JobStatus,
     LinkMeshStep,
+    ProgramStep,
     RemoveStep,
     StageStep,
     StepState,
@@ -269,6 +270,16 @@ class Runner:
                         modes.add(link_or_copy(f, dst / f.relative_to(src)))
                 self.event("mesh_linked", src=str(src), modes=sorted(modes))
                 ok = True
+            elif isinstance(step, ProgramStep):
+                log = self.job_dir / "logs" / f"{i:02d}-{step.name}.log"
+                st.log = str(log.relative_to(self.job_dir))
+                st.command = step.argv
+                rc = self._exec(step.argv, {**os.environ, **step.env}, str(self.case_dir), log, solver=False)
+                st.exit_code = rc
+                ok = rc == 0
+                if ok and step.success_text:
+                    tail = log.read_bytes()[-200_000:].decode("utf-8", errors="replace")
+                    ok = step.success_text in tail
             elif isinstance(step, StageStep):
                 spec = self.provider.stage_in(self.case_dir) if step.direction == "in" else self.provider.stage_out(self.case_dir)
                 if spec is None:
@@ -352,6 +363,7 @@ class Runner:
         self.state.child_create_time = create_time(proc.pid)
         self.save()
         stop_sent_at: Optional[float] = None
+        finish_sent = False
         while True:
             rc = proc.poll()
             if rc is not None:
@@ -368,6 +380,14 @@ class Runner:
                 self.state.child_pid = None
                 self.save()
                 return proc.returncode if proc.returncode is not None else -9
+            if req == "finish" and solver and not finish_sent:
+                # end the solver normally after it writes the current state (converged run):
+                # the job continues with its remaining steps (reconstructPar) and completes
+                finish_sent = True
+                atomic_write_text(self.case_dir / STOP_FO_NAME, "action=writeNow\n")
+                if self._staged_live:
+                    self._trigger_staged()
+                self.event("finish_requested", mechanism="abort function object")
             if req == "stop" and stop_sent_at is None:
                 self.state.stop_requested = "stop"
                 self.state.status = JobStatus.STOPPING

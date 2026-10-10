@@ -5,7 +5,6 @@ import json
 import pytest
 
 from aerobench.core.fs import sha256_json
-from aerobench.core.ids import utc_now_iso
 from aerobench.domain.project import ProjectConfig, stage_hashes, v1_mesh_stage_input, v1_solve_stage_input
 from aerobench.geometry.fixtures import generic_car
 from aerobench.geometry.io import write_stl

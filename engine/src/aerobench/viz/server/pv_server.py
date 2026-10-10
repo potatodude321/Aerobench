@@ -328,6 +328,87 @@ def op_surface(p):
     return hdr
 
 
+def op_surface_loads(p):
+    """Wall loads on patches for structural analysis: per boundary face (triangulated) the
+    centroid, area vector (pointing out of the fluid, i.e. into the body), kinematic pressure
+    and the wallShearStress field, written to an .npz file."""
+    out = {}
+    counts = {}
+    for patch in p["patches"]:
+        src = S.surfaces([patch])
+        tri = Triangulate(Input=ExtractSurface(Input=MergeBlocks(Input=src)))
+        pd = _fetch_polydata(tri)
+        n = pd.GetNumberOfCells()
+        if n == 0 or pd.GetPoints() is None:
+            counts[patch] = 0
+            continue
+        pts = vtk_to_numpy(pd.GetPoints().GetData()).astype(float)
+        conn = vtk_to_numpy(pd.GetPolys().GetConnectivityArray()).reshape(-1, 3)
+        a, b, c = pts[conn[:, 0]], pts[conn[:, 1]], pts[conn[:, 2]]
+        cd = pd.GetCellData()
+        pa = cd.GetArray("p")
+        if pa is None:
+            raise RuntimeError("the case has no pressure field 'p' on patch " + patch)
+        wa = cd.GetArray("wallShearStress")
+        out[patch + "/centre"] = (a + b + c) / 3.0
+        out[patch + "/area"] = 0.5 * np.cross(b - a, c - a)
+        out[patch + "/p"] = vtk_to_numpy(pa).astype(float).reshape(-1)
+        out[patch + "/wss"] = vtk_to_numpy(wa).astype(float).reshape(-1, 3) if wa is not None else np.zeros((len(conn), 3))
+        counts[patch] = int(len(conn))
+    np.savez(p["out"], **out)
+    return {"faces": counts, "time": S.time, "wall_shear": all((k + "/wss") in out for k in counts if counts[k])}
+
+
+def op_decimate(p):
+    """Coarsen a triangle surface (quadric error metric, boundary kept): npz in -> npz out.
+    Each region (part) is coarsened on its own so parts stay separate."""
+    from vtkmodules.util.numpy_support import numpy_to_vtk, numpy_to_vtkIdTypeArray
+    from vtkmodules.vtkCommonCore import vtkPoints
+    from vtkmodules.vtkCommonDataModel import vtkCellArray, vtkPolyData
+    from vtkmodules.vtkFiltersCore import vtkCleanPolyData, vtkQuadricDecimation, vtkTriangleFilter
+
+    d = np.load(p["in"])
+    pts, faces, regions = d["points"], d["faces"].astype(np.int64), d["regions"].astype(np.int64)
+    target = float(p["target"])
+    out_p, out_f, out_r = [], [], []
+    off = 0
+    for r in np.unique(regions):
+        f = faces[regions == r]
+        used = np.unique(f)
+        remap = -np.ones(len(pts), dtype=np.int64)
+        remap[used] = np.arange(len(used))
+        P, F = pts[used], remap[f]
+        keep_frac = min(1.0, target * len(f) / max(1, len(faces)) / max(1, len(f)))
+        if keep_frac < 0.999:
+            vp = vtkPoints()
+            vp.SetData(numpy_to_vtk(np.ascontiguousarray(P, dtype=np.float64), deep=1))
+            cells = vtkCellArray()
+            conn = np.hstack([np.full((len(F), 1), 3, dtype=np.int64), F]).ravel()
+            cells.SetCells(len(F), numpy_to_vtkIdTypeArray(np.ascontiguousarray(conn), deep=1))
+            pd = vtkPolyData()
+            pd.SetPoints(vp)
+            pd.SetPolys(cells)
+            dec = vtkQuadricDecimation()
+            dec.SetInputData(pd)
+            dec.SetTargetReduction(1.0 - keep_frac)
+            dec.VolumePreservationOn()
+            dec.Update()
+            tri = vtkTriangleFilter()
+            tri.SetInputConnection(dec.GetOutputPort())
+            cl = vtkCleanPolyData()
+            cl.SetInputConnection(tri.GetOutputPort())
+            cl.Update()
+            o = cl.GetOutput()
+            P = vtk_to_numpy(o.GetPoints().GetData()).astype(float)
+            F = vtk_to_numpy(o.GetPolys().GetConnectivityArray()).reshape(-1, 3).astype(np.int64)
+        out_p.append(P)
+        out_f.append(F + off)
+        out_r.append(np.full(len(F), r))
+        off += len(P)
+    np.savez(p["out"], points=np.vstack(out_p), faces=np.vstack(out_f), regions=np.concatenate(out_r))
+    return {"faces_in": int(len(faces)), "faces_out": int(sum(len(f) for f in out_f))}
+
+
 def _internal():
     return S.internal()
 
@@ -645,6 +726,8 @@ OPS = {
     "screenshot": op_screenshot,
     "mesh_patches": op_mesh_patches,
     "mesh_slice": op_mesh_slice,
+    "surface_loads": op_surface_loads,
+    "decimate": op_decimate,
 }
 
 

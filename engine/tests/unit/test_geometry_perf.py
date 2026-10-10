@@ -1,8 +1,6 @@
 """Fast mesh kernels: identical results to the reference numpy/brute-force versions, and the
 behaviour around orientation changes that the faster paths must not alter."""
 
-import tempfile
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -14,7 +12,6 @@ from aerobench.geometry.fixtures import generic_car, sphere
 from aerobench.geometry.frontal_area import _basis, projected_area
 from aerobench.geometry.inspect import inspect_surface, with_units
 from aerobench.geometry.io import read_stl
-from aerobench.geometry.trisurface import TriSurface
 
 
 @pytest.mark.parametrize("seed", [0, 1, 2])

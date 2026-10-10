@@ -150,6 +150,12 @@ class JobManager:
         atomic_write_text(self.project.job_dir(job_id) / "control.json", json.dumps({"request": "kill" if force else "stop", "t": utc_now_iso()}))
         self.db.log_event("job_stop_requested", job_id, force=force)
 
+    def request_finish(self, job_id: str) -> None:
+        """Let the running solver write its current state and end normally; the job then
+        completes its remaining steps (used when a run has converged)."""
+        atomic_write_text(self.project.job_dir(job_id) / "control.json", json.dumps({"request": "finish", "t": utc_now_iso()}))
+        self.db.log_event("job_finish_requested", job_id)
+
     def list(self, statuses: Optional[list[str]] = None) -> list[dict[str, Any]]:
         if statuses:
             q = "SELECT * FROM jobs WHERE status IN (%s) ORDER BY created_at" % ",".join("?" * len(statuses))

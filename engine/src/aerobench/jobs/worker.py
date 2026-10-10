@@ -30,7 +30,10 @@ def _ingestors() -> dict[str, Callable]:
     from ..services.mesh import ingest_mesh
     from ..services.runs import ingest_run
 
-    return {"mesh": lambda p, tid: ingest_mesh(p, tid), "solve": lambda p, tid: ingest_run(p, tid)}
+    from ..services.structures import ingest_structure
+
+    return {"mesh": lambda p, tid: ingest_mesh(p, tid), "solve": lambda p, tid: ingest_run(p, tid),
+            "fea": lambda p, tid: ingest_structure(p, tid)}
 
 
 def lock_holder(root: Path) -> Optional[dict]:
@@ -136,8 +139,8 @@ class Worker:
                 pr = run_progress(self.project, j["target_id"])
                 conv = pr.get("convergence") or {}
                 if conv.get("status") == "converged" and conv.get("total") and conv.get("met") == conv.get("total"):
-                    self.jm.request_stop(j["id"])
-                    self.db.update("runs", "id", j["target_id"], {"notes": "Stopped automatically: all convergence criteria were met."})
+                    self.jm.request_finish(j["id"])
+                    self.db.update("runs", "id", j["target_id"], {"notes": "Ended early: all convergence criteria were met."})
                     self.db.log_event("auto_stop_converged", j["target_id"], iteration=pr.get("iteration"))
                     report.setdefault("auto_stopped", []).append(j["id"])
             except Exception:  # noqa: BLE001 - never let the check disturb scheduling

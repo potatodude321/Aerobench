@@ -69,3 +69,12 @@ def msmpi_installer() -> Optional[Path]:
         return None
     p = b / "redist" / "msmpisetup.exe"
     return p if p.is_file() else None
+
+
+def calculix() -> Optional[Path]:
+    """The bundled CalculiX solver (``resources\\calculix\\ccx.exe``)."""
+    b = bundle_dir()
+    if b is None:
+        return None
+    p = b / "calculix" / ("ccx.exe" if os.name == "nt" else "ccx")
+    return p if p.is_file() else None

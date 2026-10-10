@@ -45,6 +45,11 @@ Step "Bundled applications (OpenFOAM, ParaView, MS-MPI)"
 python packaging\prepare_thirdparty.py
 if ($LASTEXITCODE -ne 0) { throw "prepare_thirdparty failed" }
 
+Step "CalculiX (structural solver)"
+# after prepare_thirdparty: adds its entry to bundle.json
+python packaging\prepare_calculix.py
+if ($LASTEXITCODE -ne 0) { throw "prepare_calculix failed" }
+
 Step "Embedded Python runtime"
 $args = @("packaging\prepare_python.py", "--python-version", $PythonVersion)
 if ($NoCad) { $args += "--no-cad" }
@@ -58,7 +63,7 @@ if ($LASTEXITCODE -ne 0) { throw "embedded engine does not import" }
 & packaging\build\python\python.exe -m aerobench.cli doctor
 # exit code 2 only means OpenFOAM is not installed on the build machine
 
-Step "Installation components (Python runtime, OpenFOAM, ParaView)"
+Step "Installation components (Python runtime, OpenFOAM, ParaView, CalculiX)"
 # separate archives with content ids: the setup keeps unchanged components when updating
 python packaging\make_components.py
 if ($LASTEXITCODE -ne 0) { throw "make_components failed" }

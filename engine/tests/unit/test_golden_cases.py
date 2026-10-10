@@ -8,6 +8,7 @@ rotating-wheel boundary conditions)."""
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -46,8 +47,9 @@ def project(tmp_path_factory):
 
 
 def _normalise(text: str) -> str:
-    # headers carry the generator version but no dates or paths; keep the text as is
-    return text.replace("\r\n", "\n")
+    # headers carry the application version (but no dates or paths): a release number alone
+    # must not count as a change of the generated case
+    return re.sub(r"AeroBench \d+\.\d+\.\d+", "AeroBench X.Y.Z", text.replace("\r\n", "\n"))
 
 
 @pytest.mark.parametrize("fork,version", [("opencfd", "v2606"), ("foundation", "14")])
@@ -71,7 +73,7 @@ def test_generated_case_matches_golden(project, fork, version):
         return
     if not base.exists():
         pytest.skip("golden files not generated yet (run with AEROBENCH_UPDATE_GOLDEN=1)")
-    expected = {str(p.relative_to(base)).replace(os.sep, "/"): p.read_text() for p in base.rglob("*") if p.is_file()}
+    expected = {str(p.relative_to(base)).replace(os.sep, "/"): _normalise(p.read_text()) for p in base.rglob("*") if p.is_file()}
     assert sorted(expected) == sorted(files), "set of generated files changed"
     for name in files:
         assert files[name] == expected[name], f"{name} differs from the golden file"

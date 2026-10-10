@@ -235,7 +235,7 @@ def plan(project: Project, ctx: AppContext, goal: str) -> Plan:
         pl.objective = "Most downforce (lowest lift coefficient)"
         ratio = 1.10 if element else 1.05
         constraints.append({"metric": "Cd", "op": "<=", "value": ratio, "bound": "baseline_ratio"})
-        pl.keeps.append(f"drag up by at most {round((ratio - 1) * 100)} %")
+        pl.keeps.append(f"drag up by at most {round((ratio - 1) * 100)}\u00a0%")
         if not element and makes_downforce and base.get("balance_front_pct") is not None and cfg.vehicle.wheelbase:
             constraints += [{"metric": "balance_front_pct", "op": ">=", "value": -2.0, "bound": "baseline_delta"},
                             {"metric": "balance_front_pct", "op": "<=", "value": 2.0, "bound": "baseline_delta"}]

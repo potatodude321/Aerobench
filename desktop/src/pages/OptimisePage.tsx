@@ -26,6 +26,7 @@ import {
   VariableDraft,
   VariablesEditor,
 } from "./explore/common";
+import { QuickGoals } from "./explore/QuickGoals";
 import { ZonesPanel } from "./explore/ZonesPanel";
 
 const ALGOS = [
@@ -141,7 +142,9 @@ function OptimiseWorkspace({ seedParams, onSeeded }: { seedParams: string[] | nu
 
   const side = (
     <Stack gap="xs">
-      <SectionTitle>New optimisation</SectionTitle>
+      <SectionTitle first>Start in one click</SectionTitle>
+      <QuickGoals onStarted={(id) => { setSel(id); reloadList(); }} refreshKey={list.map((x: any) => `${x.id}:${x.status}`).join(",")} />
+      <SectionTitle>Your own optimisation</SectionTitle>
       <TextInput size="xs" label="Name" value={name} onChange={(e) => setName(e.currentTarget.value)} />
       <Select size="xs" label="Algorithm" data={ALGOS.map(({ value, label }) => ({ value, label }))} value={algorithm} onChange={(v) => v && setAlgorithm(v)} />
       <Text size="xs" c="dimmed">{ALGOS.find((a) => a.value === algorithm)?.help}</Text>
@@ -210,8 +213,9 @@ function OptimiseWorkspace({ seedParams, onSeeded }: { seedParams: string[] | nu
   return (
     <PageLayout side={side} sideWidth={460} pad>
       {d ? <OptimisationView d={d} reload={reload} onPromote={(id) => promoteDesign(d.id, id, refreshProject)} /> : (
-        <EmptyState title="No optimisation selected">
-          Choose design variables (operating point, pose or geometry parameters), objectives and constraints. Every evaluation is a full mesh + RANS run;
+        <EmptyState title="No optimisation yet">
+          Start one of the goals on the left in one click, or choose your own design variables (operating point, pose or geometry parameters), objectives and
+          constraints. Every evaluation is a full mesh + RANS run;
           failed designs are recorded and the optimiser learns from them. Progress is checkpointed after every design, so the search resumes after a restart.
         </EmptyState>
       )}

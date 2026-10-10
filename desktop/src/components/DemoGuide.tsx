@@ -15,7 +15,7 @@ const AHMED_STEPS: Step[] = [
   { id: "physics", label: "Physics", text: "40 m/s with the k-ω SST model. The run stops by itself once all convergence criteria are met (800 iterations at most)." },
   { id: "run", label: "Run", text: "Start the run and follow residuals, forces and the time left. Measured Cd is about 0.29; steady RANS on this coarse mesh usually gives 0.33 to 0.37." },
   { id: "results", label: "Results", text: "Pressure on the body and the wake behind it: the low pressure on the slant and the rear face is where most of the drag comes from." },
-  { id: "optimise", label: "Optimise", text: "Shape zones over the rear slant and the rear taper are ready (Shape zones tab). Try a change, then “Optimise these”; start with 6 to 8 designs, each is a full run." },
+  { id: "optimise", label: "Optimise", text: "Click Start next to Lower drag: it reshapes the rear slant and taper inside the shape zones that are set up (Shape zones tab shows them) and keeps the lift in check. Each design is a full run." },
 ];
 
 const WING_STEPS: Step[] = [
@@ -26,6 +26,7 @@ const WING_STEPS: Step[] = [
   { id: "run", label: "Run", text: "Start the run and follow residuals, forces and the time left. Downforce grows as the wing nears the ground." },
   { id: "results", label: "Results", text: "Suction under the wing, strongest near the ground: that pressure is what the structure has to carry." },
   { id: "structure", label: "Structure", text: "A 1.1 mm carbon twill skin held by two mounts is set up. Check the loads, run the structural check, then try thinner layups or other mounts." },
+  { id: "optimise", label: "Optimise", text: "Click Start next to More downforce: it tries other angles and heights over the ground, keeping the drag within 10 %. Each design is a full run." },
 ];
 
 export function DemoGuide({ section, kind, onGo, onClose }: { section: Section; kind: "ahmed" | "wing"; onGo: (s: Section) => void; onClose: () => void }) {

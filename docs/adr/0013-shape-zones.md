@@ -33,6 +33,12 @@ which parts moved, by how much, and whether the change is buildable.
    changed shape, the share of the surface that moves and the validity check (folds,
    intersections, ground contact).
 
+5. **One-click goals** build on zones: a goal uses the enabled zones, or places typical ones
+   for its purpose when there are none (one variable each), adds the constraints that keep
+   the goal honest (lift for a drag search, drag and balance for a downforce search) and a
+   Bayesian budget of max(5, 2d + 1) + max(6, 2d) + 1 designs (at most 30). Aero elements vary
+   their angle and height over the ground instead.
+
 ## Consequences
 
 * An optimisation over zones cannot produce a change the user did not allow, and its

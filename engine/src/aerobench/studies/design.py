@@ -83,6 +83,11 @@ def build_design(project: Project, base_cfg: ProjectConfig, assignments: dict[st
     cfg = base_cfg.model_copy(deep=True)
     try:
         side = apply_targets(cfg, assignments)
+        if side["element_pose"]:
+            # an element's angle and height become its pose (rake, ride height) with the clearance kept
+            from ..services.element import pose_element
+
+            pose_element(project, cfg)
     except (KeyError, ValueError) as exc:
         return DesignBuild(cfg, None, errors=[{"code": "design.invalid_value", "message": str(exc)}])
     out = DesignBuild(cfg, cfg.geometry.revision_id)

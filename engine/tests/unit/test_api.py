@@ -181,6 +181,12 @@ def test_wing_demo_and_structure_routes(client, tmp_path):
     assert {m["id"] for m in s["materials"]["builtin"]} >= {"cfrp_ud_t700", "al_6061_t6"}
     pre = client.get(f"/api/p/{pid}/structure/presets").json()
     assert {p["preset"] for p in pre["supports"]} == {"ends", "pylons", "centre", "rear_edge"}
+    # one-click optimisation goals: an element changes its angle and height
+    goals = {g["goal"]: g for g in client.get(f"/api/p/{pid}/optimise/quick").json()}
+    assert set(goals) == {"drag", "downforce", "efficiency"} and all(g["available"] for g in goals.values())
+    assert {v["target"] for v in goals["downforce"]["definition"]["variables"]} == {"element.angle_deg", "element.ground_clearance"}
+    targets = {t["target"] for t in client.get(f"/api/p/{pid}/studies/targets").json()}
+    assert "element.angle_deg" in targets and "vehicle.rake_deg" not in targets
     # a structural check needs the loads of a finished flow simulation
     r = client.post(f"/api/p/{pid}/structure/analyses", json={})
     assert r.status_code == 400 and r.json()["error"]["code"] in ("structure.no_run", "structure.no_ccx")

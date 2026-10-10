@@ -581,3 +581,14 @@ table.compact th {
   border-bottom: 1px solid var(--ab-line);
   flex-shrink: 0;
 }
+
+/* one-click optimisation goals */
+.ab-quick-goal {
+  padding: 9px 10px 9px 12px;
+  border: 1px solid var(--ab-line);
+  border-left: 2px solid var(--ab-accent);
+  border-radius: 4px;
+}
+.ab-quick-goal[data-disabled] {
+  border-left-color: var(--ab-line);
+}

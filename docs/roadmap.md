@@ -27,6 +27,8 @@ tested and documented; later items are ordered by engineering value.
 * **Shape zones** for optimisation with movement heat maps and a baseline ↔ changed slider
   (ADR-0013); per-design shape view in optimisations.
 * Ready-to-run demos (Ahmed body; front wing with its structural check) with guides.
+* One-click optimisation goals (lower drag, more downforce, better efficiency) that choose
+  variables, constraints, budget and scheduling (`services/quick_optimise.py`).
 * Live logs for every job, cancellable meshing, time left and convergence criteria with the
   current values during runs, automatic stop once converged, results read and announced as
   soon as a run ends; no false "settings changed" states.

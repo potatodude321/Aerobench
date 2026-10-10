@@ -79,7 +79,9 @@ design; stored in the CFD frame with an identity transform and cached by a conte
 
 * `DesignVariable` — id, **target** (see `studies/targets.py`: `operating.speed`,
   `operating.yaw_deg`, `vehicle.ride_height_offset`, `vehicle.rake_deg`,
-  `vehicle.front_ride_height`, `vehicle.rear_ride_height`, `mesh.base_cell_size`,
+  `vehicle.front_ride_height`, `vehicle.rear_ride_height`, `element.angle_deg`,
+  `element.ground_clearance` (aero elements: the pose follows with the clearance kept),
+  `mesh.base_cell_size`,
   `numerics.iterations`, `geometry.variant`, `param.<id>`), kind (continuous, integer,
   discrete), bounds or values.
 * `StudyDefinition` — kind (one factor, full factorial, Latin hypercube, table), levels,

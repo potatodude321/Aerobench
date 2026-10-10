@@ -20,6 +20,7 @@ import { api } from "../api/client";
 import { CoefficientChart, ResidualChart } from "../charts/RunCharts";
 import { ColorLegend, fmt } from "../components/ColorLegend";
 import { notifyError, notifyInfo, notifyOk } from "../components/notify";
+import { OptimiseMenu } from "./explore/QuickGoals";
 import { DiagnosticList, EmptyState, Hint, KeyValue, Kpi, Readouts, SectionTitle, StatusBadge } from "../components/ui";
 import { pid, useApp } from "../state/store";
 import { decodeAbg } from "../viewport/abg";
@@ -193,6 +194,7 @@ export function ResultsPage() {
   const conv = run?.convergence;
   const comps = run?.metrics?.components || {};
   const op = run?.operating || {};
+  const isElement = useApp.getState().project?.config.application === "aero_element";
   const active = layers.find((l) => l.id === activeLayer) || layers[layers.length - 1];
 
   return (
@@ -206,21 +208,33 @@ export function ResultsPage() {
           {run && <StatusBadge status={run.status} />}
           {conv && <StatusBadge status={conv.status} />}
         </Group>
-        {bridge && vizStatus?.paraview && (
-          <Button size="xs" variant="default" leftSection={<IconExternalLink size={14} />} onClick={openInParaView}>
-            Open in ParaView
-          </Button>
-        )}
+        <Group gap={8} wrap="nowrap">
+          {run && <OptimiseMenu />}
+          {bridge && vizStatus?.paraview && (
+            <Button size="xs" variant="default" leftSection={<IconExternalLink size={14} />} onClick={openInParaView}>
+              Open in ParaView
+            </Button>
+          )}
+        </Group>
       </div>
       {run && (
         <Readouts>
           <Kpi label="Drag coefficient Cd" value={m.Cd} digits={4} sub={`CdA ${fmt(m.CdA, 3)} m², drag ${fmt(m.drag_N, 1)} N`} sign="Positive rearward" />
           <Kpi label="Lift coefficient Cl" value={m.Cl} digits={4} sub={`Downforce ${fmt(m.downforce_N, 1)} N`} sign="Positive up; downforce = −lift" />
-          <Kpi label="Front downforce" value={m.downforce_front_N} units="N" digits={1} sub={`Cl front ${fmt(m.Cl_front, 4)}`} />
-          <Kpi label="Rear downforce" value={m.downforce_rear_N} units="N" digits={1} sub={`Cl rear ${fmt(m.Cl_rear, 4)}`} />
-          <Kpi label="Aero balance, front" value={m.balance_front_pct} units="%" digits={1}
-            color={res.balance_ill_conditioned ? "var(--ab-warn)" : undefined}
-            sub={res.balance_ill_conditioned ? "Not meaningful: the car makes net lift" : "Front ÷ total downforce"} />
+          {isElement ? (
+            <>
+              <Kpi label="Downforce" value={m.downforce_N} units="N" digits={1} sub={`Drag ${fmt(m.drag_N, 1)} N`} />
+              <Kpi label="Efficiency" value={m.efficiency} digits={2} sub="Downforce ÷ drag" />
+            </>
+          ) : (
+            <>
+              <Kpi label="Front downforce" value={m.downforce_front_N} units="N" digits={1} sub={`Cl front ${fmt(m.Cl_front, 4)}`} />
+              <Kpi label="Rear downforce" value={m.downforce_rear_N} units="N" digits={1} sub={`Cl rear ${fmt(m.Cl_rear, 4)}`} />
+              <Kpi label="Aero balance, front" value={m.balance_front_pct} units="%" digits={1}
+                color={res.balance_ill_conditioned ? "var(--ab-warn)" : undefined}
+                sub={res.balance_ill_conditioned ? "Not meaningful: the car makes net lift" : "Front ÷ total downforce"} />
+            </>
+          )}
           <Kpi label="Side force Cs" value={m.Cs} digits={4} sub={`Yaw moment ${fmt(m.yaw_Nm, 1)} N·m`} />
         </Readouts>
       )}

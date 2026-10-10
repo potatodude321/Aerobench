@@ -127,6 +127,24 @@ the newest run.
   designs and the number of runs; *Start* runs them in the background within the core budget.
   A yaw sweep uses one mesh; a sweep of the background cell size reports the grid
   convergence index.
+* **One-click goals** (Optimise → *Start in one click*, or *Optimise* on the Results page):
+  *Lower drag*, *More downforce* and *Better efficiency* (downforce ÷ drag) each start a
+  complete optimisation of the current setup. Each goal shows, before you start, what may
+  change, what must not get worse, how many designs it tries and roughly how long that takes
+  (from your last run):
+  * a vehicle changes shape inside its enabled shape zones; without any, the goal places
+    typical ones (drag: rear taper, roof trailing edge, diffuser; downforce and efficiency:
+    front splitter, rear deck, diffuser), which then appear under Shape zones;
+  * an aero element changes its angle (±5°) and, over the ground, its height (half to twice
+    today's), plus any enabled shape zones;
+  * *Lower drag* lets lift rise by at most 0.02 in Cl; *More downforce* lets drag rise by at
+    most 5 % (vehicles) or 10 % (elements) and, for a car that makes downforce, keeps the aero
+    balance within 2 points; *Better efficiency* is offered when the vehicle makes downforce;
+  * the search is Bayesian: today's shape first, a spread of designs, then designs chosen
+    from what was learnt (about 4 × the number of variables, at most 30), several at once
+    when the cores allow.
+  The optimisation is then an ordinary one: it can be paused, its designs inspected and the
+  best applied to the project.
 * **Shape zones** (Optimise → Shape zones): boxes over the parts of the vehicle an
   optimisation may reshape — typical ones (front splitter, bonnet, roof tail, rear deck,
   diffuser, boat tail, side skirts) or your own. Each zone moves its part of the surface up or

@@ -36,6 +36,10 @@ STATIC_TARGETS: dict[str, TargetInfo] = {t.target: t for t in [
                description="Change of the body height at the front axle relative to the baseline pose."),
     TargetInfo("vehicle.rear_ride_height", "Rear ride-height change", "m", "geometry",
                description="Change of the body height at the rear axle relative to the baseline pose."),
+    TargetInfo("element.angle_deg", "Element angle", "°", "geometry",
+               description="Aero element studied alone: rotation about its span, + = trailing edge up; its clearance is kept."),
+    TargetInfo("element.ground_clearance", "Element height over the ground", "m", "geometry",
+               description="Aero element in ground effect: height of its lowest point above the ground."),
     TargetInfo("mesh.base_cell_size", "Background cell size", "m", "mesh", description="Level-0 cell edge length (mesh sensitivity)."),
     TargetInfo("numerics.iterations", "Iterations", "", "solve", kind="integer"),
     TargetInfo("geometry.variant", "Geometry variant", "", "geometry", kind="discrete",
@@ -56,8 +60,14 @@ def target_info(target: str, cfg: Optional[ProjectConfig] = None) -> TargetInfo:
     raise KeyError(f"unknown study target '{target}'")
 
 
+ELEMENT_TARGETS = ("element.angle_deg", "element.ground_clearance")
+
+
 def list_targets(cfg: ProjectConfig) -> list[dict[str, Any]]:
-    out = [t.__dict__ | {"baseline": baseline_value(cfg, t.target)} for t in STATIC_TARGETS.values()]
+    element = cfg.application == "aero_element"
+    # an element's pose is its angle and height; the vehicle pose targets apply to vehicles
+    hidden = ("vehicle.front_ride_height", "vehicle.rear_ride_height", "vehicle.rake_deg", "vehicle.ride_height_offset") if element else ELEMENT_TARGETS
+    out = [t.__dict__ | {"baseline": baseline_value(cfg, t.target)} for t in STATIC_TARGETS.values() if t.target not in hidden]
     for p in cfg.parameters:
         t = target_info(f"param.{p.id}", cfg)
         out.append(t.__dict__ | {"baseline": p.baseline, "lower": p.lower, "upper": p.upper})
@@ -75,6 +85,10 @@ def baseline_value(cfg: ProjectConfig, target: str) -> Optional[Value]:
         return cfg.vehicle.rake_deg
     if target in ("vehicle.front_ride_height", "vehicle.rear_ride_height"):
         return 0.0
+    if target == "element.angle_deg":
+        return cfg.element.angle_deg
+    if target == "element.ground_clearance":
+        return cfg.element.ground_clearance
     if target == "mesh.base_cell_size":
         return cfg.mesh.base_cell_size
     if target == "numerics.iterations":
@@ -90,7 +104,7 @@ def baseline_value(cfg: ProjectConfig, target: str) -> Optional[Value]:
 def apply_targets(cfg: ProjectConfig, assignments: dict[str, Value]) -> dict[str, Any]:
     """Apply ``target -> value`` to ``cfg`` in place.  Returns side information
     (geometry-parameter values and variant revision) for the geometry stage."""
-    side: dict[str, Any] = {"param_values": {}, "variant": None, "pose_changed": False}
+    side: dict[str, Any] = {"param_values": {}, "variant": None, "pose_changed": False, "element_pose": False}
     dfront = assignments.get("vehicle.front_ride_height")
     drear = assignments.get("vehicle.rear_ride_height")
     for t, v in assignments.items():
@@ -106,6 +120,17 @@ def apply_targets(cfg: ProjectConfig, assignments: dict[str, Value]) -> dict[str
             side["pose_changed"] = True
         elif t in ("vehicle.front_ride_height", "vehicle.rear_ride_height"):
             pass  # handled jointly below
+        elif t in ELEMENT_TARGETS:
+            if cfg.application != "aero_element":
+                raise ValueError(f"{t} applies to aero element projects only")
+            if t == "element.angle_deg":
+                cfg.element.angle_deg = float(v)
+            else:
+                if float(v) <= 0:
+                    raise ValueError("the element's height over the ground must be positive")
+                cfg.element.ground_clearance = float(v)
+            side["element_pose"] = True
+            side["pose_changed"] = True
         elif t == "mesh.base_cell_size":
             cfg.mesh.base_cell_size = float(v)
         elif t == "numerics.iterations":

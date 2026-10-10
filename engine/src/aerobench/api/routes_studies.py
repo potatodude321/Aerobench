@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 from pydantic import BaseModel
 
+from ..services import quick_optimise as quick
 from ..services import reports as rep
 from ..services import studies as svc
 from ..services import zones as zsvc
@@ -18,6 +19,10 @@ from .app import EngineState, engine
 class StudyBody(BaseModel):
     kind: str  # study | optimisation
     definition: dict[str, Any]
+
+
+class QuickBody(BaseModel):
+    goal: str  # drag | downforce | efficiency
 
 
 class ParamsBody(BaseModel):
@@ -69,6 +74,16 @@ def register(router: APIRouter) -> None:
     def study_start(pid: str, body: StudyBody, e: EngineState = Depends(engine)):
         with e.projects.lock(pid):
             return svc.start(e.projects.get(pid), e.ctx, body.kind, body.definition)
+
+    # ---------------------------------------------------------------- one-click goals
+    @router.get("/optimise/quick")
+    def quick_goals(pid: str, e: EngineState = Depends(engine)):
+        return quick.plans(e.projects.get(pid), e.ctx)
+
+    @router.post("/optimise/quick")
+    def quick_start(pid: str, body: QuickBody, e: EngineState = Depends(engine)):
+        with e.projects.lock(pid):
+            return quick.start(e.projects.get(pid), e.ctx, body.goal)
 
     @router.get("/studies/{sid}")
     def study_detail(pid: str, sid: str, e: EngineState = Depends(engine)):

@@ -41,6 +41,11 @@ def _apply(project: Project, c: ProjectConfig) -> dict[str, Any]:
     return {"chord": chord, "clearance": target, "ride_height_offset": c.vehicle.ride_height_offset}
 
 
+def pose_element(project: Project, c: ProjectConfig) -> dict[str, Any]:
+    """Derive the pose of ``c`` (a configuration copy) from its element setup, in place."""
+    return _apply(project, c)
+
+
 def apply_element_setup(project: Project, environment: Optional[str] = None, ground_clearance: Optional[float] = None,
                         angle_deg: Optional[float] = None, free_stream_chords: Optional[float] = None) -> dict[str, Any]:
     """Store the element setup and derive the pose from it."""

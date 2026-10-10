@@ -41,8 +41,9 @@ export function MorphControls({
   if (!header) return null;
   const st = header.stats || {};
   const chk = header.check;
-  const blendPos = compact ? { left: 12, top: 12, width: 220 } : { right: 12, bottom: 12, width: 300 };
-  const statsPos = compact ? { left: 12, top: 76, width: 220 } : { right: 12, bottom: 80, width: 300 };
+  // compact: small viewports, whose toolbar takes the top right: narrow boxes at the top left
+  const blendPos = compact ? { left: 12, top: 12, width: 200 } : { right: 12, bottom: 12, width: 300 };
+  const statsPos = compact ? { left: 12, top: 74, width: 200 } : { right: 12, bottom: 80, width: 300 };
   return (
     <>
       <ColorLegend title={`${title}, + outwards`} colormap="Cool to Warm" range={range} units="mm" />
@@ -52,7 +53,7 @@ export function MorphControls({
             Baseline
           </Text>
           <Text size="xs" fw={500}>
-            {Math.round(t * 100)} % of the change
+            {Math.round(t * 100)} %{compact ? "" : " of the change"}
           </Text>
           <Text size="xs" c="dimmed">
             Changed

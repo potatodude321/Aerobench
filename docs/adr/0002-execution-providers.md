@@ -78,7 +78,7 @@ digest in its provenance.
 * Missing MS-MPI is surfaced as a blocking environment error with an install action.
 * WSL/remote runs cost a sync step but gain correctness and speed.
 
-## Update (0.1.0 build 3)
+## Update (0.2.0)
 
 The WSL provider was removed. The included native Windows build (OpenFOAM v2606 + MS-MPI)
 is the only supported engine on Windows until it is fully mature; settings files that still

@@ -291,14 +291,16 @@ class Project:
         ``state`` per stage: ``none`` (nothing made yet), ``current`` (a finished mesh / run for
         exactly these settings), ``running`` (one for these settings is queued or running),
         ``stopped`` (a run for these settings was stopped; its partial results are kept),
-        ``failed`` (the latest attempt for these settings failed) or ``stale`` (there are meshes /
+        ``cancelled`` (the latest one for these settings was cancelled by the user; meshing that
+        was stopped counts as cancelled), ``failed`` (the latest attempt for these settings
+        failed) or ``stale`` (there are meshes /
         runs, but none for the current settings: something was changed). Only ``stale`` means
         "the setup changed"."""
         h = stage_hashes(self.config)
         out: dict[str, Any] = {"hashes": h}
-        for stage, table, col, ok, active, stopped in (
-            ("mesh", "mesh_revisions", "input_hash", ("completed",), ("queued", "starting", "running"), ()),
-            ("solve", "runs", "solve_hash", ("completed",), ("queued", "starting", "running", "stopping"), ("stopped", "interrupted")),
+        for stage, table, col, active, stopped, cancelled in (
+            ("mesh", "mesh_revisions", "input_hash", ("queued", "starting", "running"), (), ("cancelled", "stopped", "interrupted")),
+            ("solve", "runs", "solve_hash", ("queued", "starting", "running", "stopping"), ("stopped", "interrupted"), ("cancelled",)),
         ):
             current = self.db.one(f"SELECT id, status, created_at FROM {table} WHERE {col} = ? AND status = 'completed' "
                                   "ORDER BY created_at DESC LIMIT 1", (h[stage],))
@@ -313,6 +315,8 @@ class Project:
                 state = "current"
             elif matching is not None and matching["status"] in stopped:
                 state = "stopped"
+            elif matching is not None and matching["status"] in cancelled:
+                state = "cancelled"
             elif matching is not None:
                 state = "failed"
             else:

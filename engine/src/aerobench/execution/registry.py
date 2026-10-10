@@ -25,7 +25,7 @@ def provider_from_dict(d: dict[str, Any]) -> ExecutionProvider:
     return cls(d.get("id", d["kind"]), d.get("config"))
 
 
-# WSL was removed in 0.1.0 build 3: the bundled native Windows OpenFOAM is the supported path.
+# WSL was removed in 0.2.0: the bundled native Windows OpenFOAM is the supported path.
 # Settings written by earlier builds may still name it; such entries are ignored.
 RETIRED_KINDS = {"wsl"}
 

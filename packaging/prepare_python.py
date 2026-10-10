@@ -8,9 +8,14 @@ Runs on Windows or Linux (cross-installs Windows wheels):
 Result (``packaging/build``):
 
     python/                    official embeddable CPython (amd64) with site-packages enabled
-      Lib/site-packages/       aerobench engine + dependencies (win_amd64 wheels only)
+      Lib/site-packages/       the engine's dependencies (win_amd64 wheels, versions pinned in
+                               packaging/windows-constraints.txt)
+    engine/                    the aerobench engine package (on sys.path through python3xx._pth)
     THIRD-PARTY-LICENSES.txt   licence texts of everything installed into the runtime
     wheels/                    the engine wheel that was installed
+
+The engine is kept out of the runtime folder so that the runtime (a separately updated
+component of the installation, see make_components.py) stays identical between releases.
 
 The download is verified against ``--sha256`` when given (recommended for release builds;
 python.org publishes the digests on the release page).
@@ -61,12 +66,14 @@ def main() -> int:
 
     out = Path(args.out)
     py_dir = out / "python"
+    engine_dir = out / "engine"
     wheels = out / "wheels"
     cache = out / "cache"
     for d in (out, wheels, cache):
         d.mkdir(parents=True, exist_ok=True)
-    if py_dir.exists():
-        shutil.rmtree(py_dir)
+    for d in (py_dir, engine_dir):
+        if d.exists():
+            shutil.rmtree(d)
 
     ver = args.python_version
     major_minor = "".join(ver.split(".")[:2])  # "312"
@@ -78,7 +85,9 @@ def main() -> int:
     # enable site-packages in the embeddable distribution
     pth = py_dir / f"python{major_minor}._pth"
     lines = [ln for ln in pth.read_text().splitlines() if ln.strip() != "#import site"]
-    for extra in ("Lib\\site-packages", "import site"):
+    # the engine (resources/engine) before the dependencies; ._pth paths are relative to the
+    # runtime folder, and with a ._pth file PYTHONPATH is ignored
+    for extra in ("..\\engine", "Lib\\site-packages", "import site"):
         if extra not in lines:
             lines.append(extra)
     pth.write_text("\r\n".join(lines) + "\r\n")
@@ -96,10 +105,19 @@ def main() -> int:
     # dependencies of dependencies (colorama for click) are listed explicitly.
     reqs = [str(engine_whl), "colorama"] + (["cadquery-ocp-novtk>=7.8"] if args.cad else [])
     run([sys.executable, "-m", "pip", "install", "--no-compile", "--target", str(site), "--platform", "win_amd64",
-         "--python-version", ".".join(ver.split(".")[:2]), "--implementation", "cp", "--only-binary=:all:", "--upgrade", *reqs])
+         "--python-version", ".".join(ver.split(".")[:2]), "--implementation", "cp", "--only-binary=:all:", "--upgrade",
+         "-c", str(ROOT / "packaging" / "windows-constraints.txt"), *reqs])
 
     for stray in site.glob("*.whl"):
         stray.unlink()
+    # the engine moves next to the runtime (see the module docstring)
+    engine_dir.mkdir()
+    for item in [*site.glob("aerobench"), *site.glob("aerobench-*.dist-info")]:
+        shutil.move(str(item), str(engine_dir / item.name))
+    if not (engine_dir / "aerobench" / "__init__.py").is_file():
+        raise SystemExit("the engine package was not installed")
+    for script in (site / "bin").glob("aerobench*") if (site / "bin").is_dir() else []:
+        script.unlink()
 
     # licences
     lic_cmd = [sys.executable, str(ROOT / "packaging" / "licenses.py"), "--site-packages", str(site), "--node-modules",

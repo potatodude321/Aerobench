@@ -11,6 +11,7 @@ const STATE_WORDS: Record<string, string> = {
   current: "up to date with the settings",
   running: "in progress",
   stopped: "stopped (resumable)",
+  cancelled: "cancelled for the current settings",
   failed: "failed for the current settings",
   stale: "none for the current settings",
 };

@@ -7,7 +7,6 @@ import io
 import math
 from typing import Any, Optional, Union
 
-import numpy as np
 
 from ..aero.forces import METRIC_INFO
 from ..core.errors import AeroBenchError, ErrorCategory
@@ -20,13 +19,11 @@ from ..domain.exploration import (
     VariableKind,
 )
 from ..domain.project import ProjectConfig
-from ..geometry.deform import apply_parameters, check_deformation, parameter_values_complete
-from ..geometry.pose import place_in_cfd_frame, posed_components
 from ..jobs.worker import ensure_worker_process
 from ..optimisation.algorithms import create as create_optimizer
 from ..project.db import dec
 from ..project.store import Project
-from ..studies.design import baseline_extent, build_design, frozen_transform
+from ..studies.design import baseline_extent, build_design
 from ..studies.doe import generate
 from ..studies.space import DesignSpace
 from ..studies.targets import baseline_value, list_targets, target_info
@@ -382,8 +379,15 @@ def promote_design(project: Project, sid: str, design_id: str) -> dict[str, Any]
 # ---------------------------------------------------------------------------- geometry parameters
 
 
+def parse_parameters(params: list[dict[str, Any]]) -> list[GeometryParameter]:
+    return [GeometryParameter.model_validate(p) for p in params]
+
+
 def set_parameters(project: Project, params: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    parsed = [GeometryParameter.model_validate(p) for p in params]
+    """Store hand-made parameters; zone parameters always come from the zones (any edited copy
+    in ``params`` is replaced by the generated one)."""
+    zone_params = [p for p in project.config.parameters if p.deformation.kind == "zone"]
+    parsed = [p for p in parse_parameters(params) if p.deformation.kind != "zone"] + zone_params
     ids = [p.id for p in parsed]
     if len(ids) != len(set(ids)):
         raise _err("parameters.duplicate", "Geometry parameter ids must be unique.")
@@ -399,46 +403,6 @@ def set_parameters(project: Project, params: list[dict[str, Any]]) -> list[dict[
 
     project.update(mutate)
     return [p.model_dump(mode="json") for p in parsed]
-
-
-def parameter_preview(project: Project, values: dict[str, float], params: Optional[list[dict]] = None, check: bool = True,
-                      max_faces: int = 400_000) -> tuple[dict[str, Any], bytes]:
-    """Deformed, posed geometry with per-vertex displacement magnitude (mm) + validity check."""
-    from ..geometry.repair import simplify_vertex_clustering
-    from ..geometry.trisurface import TriSurface
-    from ..viz.payload import encode_mesh
-
-    cfg = project.config
-    defs = [GeometryParameter.model_validate(p) for p in params] if params is not None else cfg.parameters
-    full = parameter_values_complete(defs, values)
-    tr = frozen_transform(project, cfg, cfg.geometry.revision_id)  # type: ignore[arg-type]
-    cfd, _ = place_in_cfd_frame(project.raw_surface(), tr)
-    res = apply_parameters(cfd, cfg.geometry.components, cfg.vehicle.wheels, defs, full, cfg.vehicle.centreline_y)
-    chk = check_deformation(cfd, res, defs, check_intersections=check, components=cfg.geometry.components).as_dict() if check else {"valid": None, "errors": [], "warnings": [], "stats": {}}
-    vcfg = cfg.model_copy(deep=True)
-    vcfg.vehicle.wheels = res.wheels
-    disp_surf = TriSurface(np.linalg.norm(res.displacement, axis=1)[:, None].repeat(3, 1), cfd.faces, cfd.regions, cfd.region_names)
-    parts, z0, _ = posed_components(res.surface, cfg.geometry.components, vcfg.vehicle, cfg.tunnel.contact_patch_fraction)
-    dparts, _, _ = posed_components(disp_surf, cfg.geometry.components, vcfg.vehicle.model_copy(update={"rake_deg": 0.0, "ride_height_offset": 0.0}),
-                                    cfg.tunnel.contact_patch_fraction)
-    surfs, scal = [], []
-    for cid, s in parts.items():
-        surfs.append(TriSurface(s.points, s.faces, np.zeros(s.n_faces, np.int32), [cid]))
-        scal.append(dparts[cid].points[:, 0])
-    merged = TriSurface.merge(surfs)
-    scalars = np.concatenate(scal) * 1000.0
-    if merged.n_faces > max_faces:
-        from scipy.spatial import cKDTree
-
-        lo, hi = merged.bbox()
-        cell = float(np.linalg.norm(hi - lo)) / math.sqrt(max_faces) * 0.9
-        small, _ = simplify_vertex_clustering(merged, cell)
-        _, j = cKDTree(merged.points).query(small.points)
-        merged, scalars = small, scalars[j]
-    header, blob = encode_mesh(merged.points.astype(np.float32), merged.faces.astype(np.uint32), scalars=scalars.astype(np.float32),
-                               part_ids=merged.regions.astype(np.uint16), part_names=merged.region_names,
-                               meta={"ground_z": z0, "scalar_name": "Displacement", "scalar_units": "mm", "check": chk})
-    return header, blob
 
 
 def targets(project: Project) -> list[dict[str, Any]]:

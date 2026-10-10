@@ -41,6 +41,13 @@ const MAPS: Record<string, Stop[]> = {
     [0.75, 0.973, 0.585, 0.254],
     [1, 0.940, 0.975, 0.131],
   ],
+  /** where shape zones allow change: plain surface grey to warm */
+  "Shape freedom": [
+    [0, 0.42, 0.45, 0.5],
+    [0.35, 0.42, 0.56, 0.66],
+    [0.7, 0.62, 0.72, 0.62],
+    [1, 0.93, 0.78, 0.4],
+  ],
   "Blue - Red": [
     [0, 0.0, 0.0, 1.0],
     [0.5, 1.0, 1.0, 1.0],

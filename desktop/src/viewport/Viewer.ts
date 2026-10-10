@@ -24,6 +24,8 @@ export interface ResultStyle {
   opacity?: number;
   visible?: boolean;
   lineWidth?: number;
+  /** multiplies the scalars before colouring (morph blending) */
+  scalarScale?: number;
 }
 
 export interface MeshLayerStyle {
@@ -187,17 +189,24 @@ export class Viewer {
     mk(new THREE.Vector3(0, 0, 1), 0x8db7e0, "z");
   }
 
+  /** A text label; the canvas widens to fit long text (``userData.aspect`` = width / height). */
   textSprite(text: string, color = 0xffffff, size = 64): THREE.Sprite {
     const c = document.createElement("canvas");
-    c.width = c.height = 128;
-    const g = c.getContext("2d")!;
-    g.font = `600 ${size}px Barlow, "Segoe UI", sans-serif`;
+    const font = `600 ${size}px Barlow, "Segoe UI", sans-serif`;
+    const probe = c.getContext("2d")!;
+    probe.font = font;
+    c.width = Math.max(128, Math.ceil(probe.measureText(text).width) + 24);
+    c.height = 128;
+    const g = c.getContext("2d")!; // resizing reset the context state
+    g.font = font;
     g.fillStyle = "#" + color.toString(16).padStart(6, "0");
     g.textAlign = "center";
     g.textBaseline = "middle";
-    g.fillText(text, 64, 64);
+    g.fillText(text, c.width / 2, 64);
     const tex = new THREE.CanvasTexture(c);
-    return new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
+    sp.userData.aspect = c.width / c.height;
+    return sp;
   }
 
   private clearGroup(g: THREE.Group): void {
@@ -411,7 +420,7 @@ export class Viewer {
     const s = this.textSprite(text, color, 40);
     (s.material as THREE.SpriteMaterial).depthTest = depthTest;
     s.position.set(p[0], p[1], p[2]);
-    s.scale.set(scale, scale, 1);
+    s.scale.set(scale * (s.userData.aspect || 1), scale, 1);
     this.overlays.add(s);
     this.dirty = true;
   }
@@ -437,7 +446,8 @@ export class Viewer {
       obj = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ vertexColors: true, transparent: (style.opacity ?? 1) < 1, opacity: style.opacity ?? 1 }));
     } else {
       const g = new THREE.BufferGeometry();
-      g.setAttribute("position", new THREE.BufferAttribute(abg.positions, 3));
+      // a payload with displacement vectors is morphed in place: keep its base positions intact
+      g.setAttribute("position", new THREE.BufferAttribute(abg.vectors ? Float32Array.from(abg.positions) : abg.positions, 3));
       g.setAttribute("color", new THREE.BufferAttribute(new Float32Array(abg.header.n_points * 3), 3));
       if (abg.indices) g.setIndex(new THREE.BufferAttribute(abg.indices, 1));
       g.computeVertexNormals();
@@ -473,8 +483,9 @@ export class Viewer {
     const s = e.abg.scalars;
     const [lo, hi] = style.range;
     const span = hi - lo || 1;
+    const k = style.scalarScale ?? 1;
     for (let i = 0; i < e.abg.header.n_points; i++) {
-      const v = s ? s[i] : 0;
+      const v = s ? s[i] * k : 0;
       if (!Number.isFinite(v)) {
         arr[3 * i] = arr[3 * i + 1] = arr[3 * i + 2] = 0.4;
       } else sampleColormap(style.colormap, (v - lo) / span, arr, 3 * i);
@@ -485,6 +496,25 @@ export class Viewer {
     mat.transparent = (style.opacity ?? 1) < 1;
     e.object.visible = style.visible ?? true;
     this.dirty = true;
+  }
+
+  /**
+   * Blend a result that carries per-vertex displacement vectors between its base shape (t = 0)
+   * and the changed shape (t = 1); the colours follow the same fraction of the change.
+   */
+  morphResult(id: string, t: number): void {
+    const e = this.resultMap.get(id);
+    if (!e || !e.abg.vectors) return;
+    const geo = (e.object as THREE.Mesh).geometry as THREE.BufferGeometry;
+    const pos = geo.getAttribute("position") as THREE.BufferAttribute;
+    const arr = pos.array as Float32Array;
+    const base = e.abg.positions;
+    const vec = e.abg.vectors;
+    for (let i = 0; i < arr.length; i++) arr[i] = base[i] + t * vec[i];
+    pos.needsUpdate = true;
+    geo.computeVertexNormals();
+    geo.computeBoundingSphere();
+    this.recolor(id, { ...e.style, scalarScale: t });
   }
 
   removeResult(id: string): void {

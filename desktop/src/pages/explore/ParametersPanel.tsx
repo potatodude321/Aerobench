@@ -1,10 +1,11 @@
 /** Geometry parameters: rigid moves, FFD and RBF morphs of selected components, with a live
  *  deformed preview coloured by displacement and the engine's validity check. */
-import { ActionIcon, Alert, Badge, Button, Group, MultiSelect, NumberInput, Paper, SegmentedControl, Slider, Stack, Switch, Text, TextInput } from "@mantine/core";
+import { ActionIcon, Badge, Button, Group, MultiSelect, NumberInput, Paper, SegmentedControl, Slider, Stack, Switch, Text, TextInput } from "@mantine/core";
 import { IconDeviceFloppy, IconPlus, IconRefresh, IconTrash } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../api/client";
-import { ColorLegend, fmt } from "../../components/ColorLegend";
+import { fmt } from "../../components/ColorLegend";
+import { MorphControls, showMorph } from "../../components/MorphView";
 import { notifyError, notifyInfo } from "../../components/notify";
 import { PageLayout, SectionTitle } from "../../components/ui";
 import { pid, useApp } from "../../state/store";
@@ -46,8 +47,8 @@ export function ParametersPanel() {
   const [params, setParams] = useState<any[]>([]);
   const [sel, setSel] = useState(0);
   const [values, setValues] = useState<Record<string, number>>({});
-  const [check, setCheck] = useState<any | null>(null);
-  const [range, setRange] = useState<[number, number]>([0, 1]);
+  const [morph, setMorph] = useState<{ header: any; range: [number, number] } | null>(null);
+  const [t, setT] = useState(1);
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [withCheck, setWithCheck] = useState(true);
@@ -110,12 +111,7 @@ export function ParametersPanel() {
       const buf = await api.postBinary(`/api/p/${pid()}/parameters/preview.abg`, { values, parameters: params, check: withCheck });
       const abg = decodeAbg(buf);
       const v = viewer.current;
-      v.clearResults();
-      v.setGeometry(null);
-      const r: [number, number] = [0, Math.max(abg.header.scalar_range?.[1] || 0, 1e-3)];
-      setRange(r);
-      v.setResult("deformed", abg, { colormap: "Viridis (matplotlib)", range: r });
-      setCheck(abg.header.check);
+      setMorph({ header: abg.header, range: showMorph(v, abg, t) });
       if (!framed.current) {
         v.view("iso");
         framed.current = true;
@@ -139,7 +135,14 @@ export function ParametersPanel() {
           </Group>
         ))}
       </Stack>
-      {p && (
+      {p && p.deformation.kind === "zone" && (
+        <Paper withBorder p={8}>
+          <Text size="xs">
+            Created by the shape zone <b>{p.deformation.zone}</b>: change it on the Optimise page, Shape zones tab.
+          </Text>
+        </Paper>
+      )}
+      {p && p.deformation.kind !== "zone" && (
         <Paper withBorder p={8}>
           <Stack gap={6}>
             <Group grow gap={6}>
@@ -241,26 +244,12 @@ export function ParametersPanel() {
   return (
     <PageLayout side={side} sideWidth={460} pad>
       <div style={{ position: "relative", height: "100%" }}>
-        <Viewport3D onReady={onViewer} />
-        <div style={{ position: "absolute", left: 12, bottom: 12, width: 300 }}>
-          <ColorLegend title="Displacement" colormap="Viridis (matplotlib)" range={range} units="mm" />
-        </div>
-        {check && (
-          <Paper style={{ position: "absolute", top: 12, left: 12, maxWidth: 420, background: "rgba(20,23,29,0.9)" }} p={8}>
-            {check.valid === null ? (
-              <Text size="xs" c="dimmed">Validity check skipped.</Text>
-            ) : check.valid ? (
-              <Alert color="teal" p={6} title="Valid design">
-                <Text size="xs">Max displacement {fmt((check.stats?.max_displacement || 0) * 1000, 3)} mm · {check.stats?.moved_vertices || 0} vertices moved</Text>
-              </Alert>
-            ) : (
-              <Alert color="red" p={6} title="Invalid design">
-                {check.errors.map((e: any, i: number) => <Text key={i} size="xs">{e.message}</Text>)}
-              </Alert>
-            )}
-            {(check.warnings || []).map((w: any, i: number) => <Text key={i} size="xs" c="yellow">{w.message}</Text>)}
-          </Paper>
-        )}
+        <Viewport3D onReady={onViewer}>
+          {morph && (
+            <MorphControls header={morph.header} range={morph.range} t={t}
+              onT={(x) => { setT(x); viewer.current?.morphResult("morph", x); }} />
+          )}
+        </Viewport3D>
       </div>
     </PageLayout>
   );

@@ -11,10 +11,14 @@
     1. engine unit tests (fail fast)
     2. bundled applications: OpenFOAM v2606 (Windows), ParaView 6.2.0, MS-MPI 10.1.3
                                                   -> packaging\build\bundle (pinned SHA-256)
-    3. embedded CPython + engine + dependencies  -> packaging\build\python
-    4. desktop renderer + Electron main/preload   -> desktop\dist, desktop\dist-electron
-    5. electron-builder NSIS installer (per-machine, one administrator prompt; installs MS-MPI
-       silently when missing)
+    3. embedded CPython + dependencies            -> packaging\build\python
+       the engine package                         -> packaging\build\engine
+    4. component archives (Python runtime, OpenFOAM, ParaView), each with a content id
+                                                  -> packaging\build\components (reused while unchanged)
+    5. desktop renderer + Electron main/preload   -> desktop\dist, desktop\dist-electron
+    6. electron-builder NSIS installer (per-machine, one administrator prompt; installs MS-MPI
+       silently when missing; updates an existing installation in place, replacing only the
+       components that changed)
 #>
 param(
   [switch]$NoCad,
@@ -53,6 +57,11 @@ Step "Smoke test of the embedded engine"
 if ($LASTEXITCODE -ne 0) { throw "embedded engine does not import" }
 & packaging\build\python\python.exe -m aerobench.cli doctor
 # exit code 2 only means OpenFOAM is not installed on the build machine
+
+Step "Installation components (Python runtime, OpenFOAM, ParaView)"
+# separate archives with content ids: the setup keeps unchanged components when updating
+python packaging\make_components.py
+if ($LASTEXITCODE -ne 0) { throw "make_components failed" }
 
 Step "Desktop build"
 Push-Location desktop

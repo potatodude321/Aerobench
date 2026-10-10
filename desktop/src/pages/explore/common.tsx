@@ -36,7 +36,7 @@ export function useTargets(): TargetInfo[] {
   const project = useApp((s) => s.project);
   useEffect(() => {
     api.get<TargetInfo[]>(`/api/p/${pid()}/studies/targets`).then(setT).catch(notifyError);
-  }, [project?.config.parameters?.length]);
+  }, [project?.config.parameters?.map((p: any) => `${p.id}:${p.lower}:${p.upper}`).join()]);
   return t;
 }
 
@@ -268,7 +268,9 @@ export function StudyHeader({ d, reload }: { d: any; reload: () => void }) {
   );
 }
 
-export function DesignTable({ d, metrics, highlight, onPromote }: { d: any; metrics: string[]; highlight?: Set<string>; onPromote?: (id: string) => void }) {
+export function DesignTable({ d, metrics, highlight, onPromote, onShape, shapeId }: {
+  d: any; metrics: string[]; highlight?: Set<string>; onPromote?: (id: string) => void; onShape?: (id: string) => void; shapeId?: string | null;
+}) {
   const { selectRun, setSection, refreshRuns, openLog } = useApp();
   const vars: string[] = d.definition.variables.map((v: any) => v.id);
   const openRun = async (rid: string) => {
@@ -292,7 +294,7 @@ export function DesignTable({ d, metrics, highlight, onPromote }: { d: any; metr
             {metrics.map((m) => <Table.Th key={m} ta="right">{m}</Table.Th>)}
             {d.kind === "optimisation" && <Table.Th>Feasible</Table.Th>}
             <Table.Th>Runs / note</Table.Th>
-            {onPromote && <Table.Th />}
+            {(onPromote || onShape) && <Table.Th />}
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
@@ -342,11 +344,16 @@ export function DesignTable({ d, metrics, highlight, onPromote }: { d: any; metr
                     </Group>
                   )}
                 </Table.Td>
-                {onPromote && (
+                {(onPromote || onShape) && (
                   <Table.Td>
-                    {x.status === "completed" && (
-                      <Button size="compact-xs" variant="subtle" onClick={() => onPromote(x.id)}>Apply</Button>
-                    )}
+                    <Group gap={2} wrap="nowrap">
+                      {onShape && x.origin !== "baseline" && (
+                        <Button size="compact-xs" variant={shapeId === x.id ? "light" : "subtle"} onClick={() => onShape(x.id)}>Shape</Button>
+                      )}
+                      {onPromote && x.status === "completed" && (
+                        <Button size="compact-xs" variant="subtle" onClick={() => onPromote(x.id)}>Apply</Button>
+                      )}
+                    </Group>
                   </Table.Td>
                 )}
               </Table.Tr>

@@ -122,6 +122,27 @@ def create_project(body: CreateProject, e: EngineState = Depends(engine)):
     return _project_payload(p, e)
 
 
+class CreateDemo(BaseModel):
+    kind: str = "ahmed"
+    parent: Optional[str] = None  # default: the projects folder from the settings
+
+
+@router.post("/projects/demo")
+def create_demo(body: CreateDemo, e: EngineState = Depends(engine)):
+    """A ready-made Ahmed body project (geometry, mesh regions, shape zones) for trying the
+    whole workflow without any files."""
+    from ..services.demo import create_ahmed_demo
+
+    if body.kind != "ahmed":
+        raise AeroBenchError.make("project.demo_unknown", ErrorCategory.PROJECT, f"Unknown demo '{body.kind}'.")
+    parent = Path(body.parent) if body.parent else Path(e.ctx.settings.default_projects_dir())
+    p = create_ahmed_demo(parent, cores=e.ctx.default_cores(parent))
+    e.projects.add(p)
+    e.ctx.settings.add_recent(str(p.root))
+    e.ctx.settings.save()
+    return _project_payload(p, e)
+
+
 @router.get("/projects/defaults")
 def project_defaults(name: str = "", e: EngineState = Depends(engine)):
     parent = e.ctx.settings.default_projects_dir()

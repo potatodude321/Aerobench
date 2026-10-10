@@ -45,7 +45,36 @@ class RBFDef(Model):
     basis: Literal["wendland_c2", "thin_plate"] = "wendland_c2"
 
 
-DeformationDef = Union[TranslateDef, RotateDef, FFDDef, RBFDef]
+class ZoneDef(Model):
+    """One shape freedom of a shape zone (see :class:`ShapeZone`): the surface inside the zone
+    box moves along ``direction``, fading smoothly (C2) to zero over ``blend`` inside the box
+    faces, so nothing outside the box moves. With ``segments`` > 1 the zone is split along x
+    into overlapping smooth sections that move independently (they sum to a uniform move).
+
+    ``x`` / ``z``: translation; ``width``: lateral scaling about the centreline (outwards for
+    positive values, reaching the full value at ``half_width`` from it)."""
+
+    kind: Literal["zone"] = "zone"
+    zone: str
+    box_min: Vec3
+    box_max: Vec3
+    blend: float = Field(0.1, gt=0)
+    direction: Literal["x", "z", "width"] = "z"
+    segments: int = Field(1, ge=1, le=5)
+    segment: int = Field(0, ge=0)
+    half_width: float = Field(1.0, gt=0, description="Reference half width for 'width' (m)")
+    metres_per_unit: float = Field(0.001, gt=0, description="Parameter values are in mm by default")
+
+    @model_validator(mode="after")
+    def _check(self):
+        if any(b <= a for a, b in zip(self.box_min, self.box_max)):
+            raise ValueError(f"zone {self.zone}: the box must have positive size in x, y and z")
+        if self.segment >= self.segments:
+            raise ValueError(f"zone {self.zone}: segment {self.segment} of {self.segments}")
+        return self
+
+
+DeformationDef = Union[TranslateDef, RotateDef, FFDDef, RBFDef, ZoneDef]
 
 
 class GeometryParameter(Model):
@@ -66,6 +95,41 @@ class GeometryParameter(Model):
     def _bounds(self):
         if not self.lower <= self.baseline <= self.upper:
             raise ValueError(f"parameter {self.id}: baseline must lie within [lower, upper]")
+        return self
+
+
+# --------------------------------------------------------------------------- shape zones
+
+
+class ZoneMove(Model):
+    direction: Literal["x", "z", "width"] = "z"
+    max_mm: float = Field(30.0, gt=0, le=1000, description="Largest movement either way (mm)")
+    segments: int = Field(1, ge=1, le=5, description="Independent sections along the car")
+
+
+class ShapeZone(Model):
+    """A region of the vehicle the optimiser may reshape; everything outside stays exactly as
+    imported. Each move becomes one geometry parameter per section (``param.<zone>_<dir>[k]``)
+    usable as a study or optimisation variable."""
+
+    id: str = Field(pattern=r"^[A-Za-z][A-Za-z0-9_]{0,40}$")
+    name: str
+    preset: str = "custom"
+    box_min: Vec3
+    box_max: Vec3
+    blend: float = Field(0.1, gt=0, description="Distance over which the change fades out inside the box (m)")
+    components: list[str] = Field(default_factory=list, description="Parts reshaped (empty = all except wheels)")
+    moves: list[ZoneMove] = Field(default_factory=lambda: [ZoneMove()])
+    symmetric: bool = Field(True, description="Mirror-symmetric about the centreline")
+    enabled: bool = True
+
+    @model_validator(mode="after")
+    def _check(self):
+        if any(b <= a for a, b in zip(self.box_min, self.box_max)):
+            raise ValueError(f"zone '{self.name}': the box must have positive size in x, y and z")
+        dirs = [m.direction for m in self.moves]
+        if len(dirs) != len(set(dirs)):
+            raise ValueError(f"zone '{self.name}': each direction can be used once")
         return self
 
 

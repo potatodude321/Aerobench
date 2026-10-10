@@ -19,7 +19,7 @@ from typing import Any, Iterable, Optional, Sequence
 
 import numpy as np
 
-from ..domain.exploration import FFDDef, GeometryParameter, RBFDef
+from ..domain.exploration import FFDDef, GeometryParameter, RBFDef, ZoneDef
 from ..domain.geometry import ComponentRole, GeometryComponent
 from ..domain.vehicle import Wheel
 from .fastops import unique_int_rows
@@ -89,6 +89,51 @@ def ffd_displacement(pts: np.ndarray, d: FFDDef, value: float) -> np.ndarray:
     stu = (pts[inside] - lo) / span
     Bs, Bt, Bu = _bernstein(l, stu[:, 0]), _bernstein(m, stu[:, 1]), _bernstein(n, stu[:, 2])
     out[inside] = value * np.einsum("pi,pj,pk,ijkc->pc", Bs, Bt, Bu, dP)
+    return out
+
+
+def smootherstep(t: np.ndarray) -> np.ndarray:
+    """C2 ramp 0 -> 1 on [0, 1]; S(t) + S(1 - t) = 1."""
+    t = np.clip(t, 0.0, 1.0)
+    return t * t * t * (t * (6.0 * t - 15.0) + 10.0)
+
+
+def zone_window(pts: np.ndarray, lo: np.ndarray, hi: np.ndarray, blend: float) -> np.ndarray:
+    """1 inside the zone box, fading C2-smoothly to 0 over ``blend`` inside each face, 0 outside."""
+    b = np.minimum(blend, 0.5 * (hi - lo))
+    d = np.minimum(pts - lo, hi - pts)  # distance to the nearest face per axis (< 0 outside)
+    w = np.ones(len(pts))
+    for a in range(3):
+        w *= smootherstep(d[:, a] / b[a])
+    return w
+
+
+def zone_section(x: np.ndarray, lo: float, hi: float, blend: float, segments: int, k: int) -> np.ndarray:
+    """Smooth partition of unity along x: section k of ``segments`` peaks at 1 at its node.
+    The nodes span the full-strength part of the zone (inside the blend bands)."""
+    if segments == 1:
+        return np.ones(len(x))
+    b = min(blend, 0.5 * (hi - lo))
+    a0, a1 = lo + b, hi - b
+    u = np.clip((x - a0) / max(a1 - a0, 1e-12), 0.0, 1.0)
+    node = k / (segments - 1)
+    return smootherstep(1.0 - np.abs(u - node) * (segments - 1))
+
+
+def zone_displacement(pts: np.ndarray, d: ZoneDef, value: float, centreline_y: float = 0.0) -> np.ndarray:
+    lo, hi = _vec(d.box_min), _vec(d.box_max)
+    out = np.zeros_like(pts)
+    inside = np.all((pts > lo) & (pts < hi), axis=1)
+    if not inside.any() or value == 0.0:
+        return out
+    p = pts[inside]
+    amp = value * d.metres_per_unit * zone_window(p, lo, hi, d.blend) * zone_section(p[:, 0], lo[0], hi[0], d.blend, d.segments, d.segment)
+    if d.direction == "x":
+        out[inside, 0] = amp
+    elif d.direction == "z":
+        out[inside, 2] = amp
+    else:  # width: scaling about the centreline, continuous across it
+        out[inside, 1] = amp * np.clip((p[:, 1] - centreline_y) / d.half_width, -1.0, 1.0)
     return out
 
 
@@ -168,6 +213,11 @@ def displacement_field(p: GeometryParameter, dv: float, centreline_y: float = 0.
             return ffd_displacement(x, d, dv)  # type: ignore[arg-type]
     elif kind == "rbf":
         f = rbf_solve(p.deformation, dv)  # type: ignore[arg-type,assignment]
+    elif kind == "zone":
+        zd = p.deformation
+
+        def f(x: np.ndarray) -> np.ndarray:
+            return zone_displacement(x, zd, dv, centreline_y)  # type: ignore[arg-type]
     else:  # pragma: no cover - guarded by the discriminated union
         raise ValueError(f"unknown deformation kind {kind}")
     if not p.symmetric_about_centreline:

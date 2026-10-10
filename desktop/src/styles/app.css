@@ -570,3 +570,14 @@ table.compact th {
 .ab-recent:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.03);
 }
+
+/* ------------------------------------------------------------------ demo guide */
+.ab-demo-guide {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 7px 12px 7px 18px;
+  background: var(--ab-surface);
+  border-bottom: 1px solid var(--ab-line);
+  flex-shrink: 0;
+}

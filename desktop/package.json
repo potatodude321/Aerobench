@@ -1,8 +1,8 @@
 {
   "name": "aerobench-desktop",
   "private": true,
-  "version": "0.1.0",
-  "description": "AeroBench (working title) — automotive CFD workbench desktop shell",
+  "version": "0.2.0",
+  "description": "AeroBench — vehicle external aerodynamics workbench",
   "main": "dist-electron/main.js",
   "author": "AeroBench developers",
   "license": "UNLICENSED",
@@ -67,10 +67,11 @@
     ],
     "extraResources": [
       {
-        "from": "../packaging/build/python",
-        "to": "python",
+        "from": "../packaging/build/engine",
+        "to": "engine",
         "filter": [
-          "**/*"
+          "**/*",
+          "!**/__pycache__/**"
         ]
       },
       {
@@ -80,6 +81,16 @@
       {
         "from": "../packaging/build/bundle",
         "to": ".",
+        "filter": [
+          "bundle.json",
+          "tools/**",
+          "redist/**",
+          "licenses/**"
+        ]
+      },
+      {
+        "from": "../packaging/build/components/tools",
+        "to": "tools",
         "filter": [
           "**/*"
         ]

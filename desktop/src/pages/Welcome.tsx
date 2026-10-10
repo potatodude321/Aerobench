@@ -70,6 +70,17 @@ export function Welcome() {
     }
   };
 
+  const demo = async () => {
+    setBusy("demo");
+    try {
+      openProjectPayload(await api.post<ProjectPayload>("/api/projects/demo", { kind: "ahmed", parent: folder || null }));
+    } catch (e) {
+      notifyError(e);
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const open = async (path?: string) => {
     let p = path || openPath;
     if (!p && bridge) p = (await bridge.openDirectory({ title: "Open a project folder" })) || "";
@@ -145,6 +156,20 @@ export function Welcome() {
                 </Button>
               </Group>
             </Stack>
+
+            <SectionTitle>Or try the demo</SectionTitle>
+            <Group justify="space-between" wrap="nowrap" gap={16} align="flex-start">
+              <div style={{ minWidth: 0 }}>
+                <Text fw={500}>Ahmed body</Text>
+                <Text size="xs" c="var(--ab-text-3)">
+                  The classic reference body, ready to run: mesh refinement regions and shape zones are set up, and a guide on each page walks
+                  through the workflow. A first run takes a few minutes.
+                </Text>
+              </div>
+              <Button variant="default" onClick={demo} loading={busy === "demo"} disabled={!!busy && busy !== "demo"} style={{ flexShrink: 0 }}>
+                Open the demo
+              </Button>
+            </Group>
 
             <SectionTitle>This computer</SectionTitle>
             <EnvironmentCard />

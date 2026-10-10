@@ -3,7 +3,7 @@
 Branding is deliberately confined to this module and ``desktop/src/brand.ts``.
 """
 
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.2.0"
 APP_INTERNAL_NAME = "aerobench"
 APP_DISPLAY_NAME = "AeroBench"  # working title only — not a product name
 

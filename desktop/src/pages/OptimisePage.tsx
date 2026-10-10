@@ -1,13 +1,18 @@
-import { ActionIcon, Alert, Button, Group, NumberInput, Paper, Select, SimpleGrid, Stack, Switch, Text, TextInput } from "@mantine/core";
+import { ActionIcon, Alert, Button, Group, NumberInput, Paper, Select, SimpleGrid, Stack, Switch, Tabs, Text, TextInput } from "@mantine/core";
 import { IconEye, IconPlayerPlay, IconPlus, IconTrash } from "@tabler/icons-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
 import { axisStyle, EChart } from "../charts/EChart";
 import { fmt } from "../components/ColorLegend";
+import { MorphControls, showMorph } from "../components/MorphView";
 import { notifyError } from "../components/notify";
-import { EmptyState, PageLayout, SectionTitle } from "../components/ui";
+import { EmptyState, Hint, PageLayout, SectionTitle } from "../components/ui";
 import { pid, useApp } from "../state/store";
+import { decodeAbg } from "../viewport/abg";
+import { Viewer } from "../viewport/Viewer";
+import { Viewport3D } from "../viewport/Viewport3D";
 import {
+  defaultVariable,
   DesignTable,
   promoteDesign,
   SchedulingFields,
@@ -21,6 +26,7 @@ import {
   VariableDraft,
   VariablesEditor,
 } from "./explore/common";
+import { ZonesPanel } from "./explore/ZonesPanel";
 
 const ALGOS = [
   { value: "gp_bo", label: "Bayesian (Gaussian process)", help: "Sample-efficient global search for one objective with constraints; the default for expensive CFD." },
@@ -33,6 +39,25 @@ interface Objective { metric: string; sense: "minimize" | "maximize"; aggregate:
 interface Constraint { metric: string; op: ">=" | "<="; value: number; bound: "absolute" | "baseline_delta" | "baseline_ratio" }
 
 export function OptimisePage() {
+  const [tab, setTab] = useState<string | null>("optimisations");
+  const [seed, setSeed] = useState<string[] | null>(null);
+  return (
+    <Tabs value={tab} onChange={setTab} style={{ height: "100%", display: "flex", flexDirection: "column" }} keepMounted={false}>
+      <Tabs.List px="sm">
+        <Tabs.Tab value="optimisations">Optimisations</Tabs.Tab>
+        <Tabs.Tab value="zones">Shape zones</Tabs.Tab>
+      </Tabs.List>
+      <Tabs.Panel value="optimisations" style={{ flex: 1, minHeight: 0 }}>
+        <OptimiseWorkspace seedParams={seed} onSeeded={() => setSeed(null)} />
+      </Tabs.Panel>
+      <Tabs.Panel value="zones" style={{ flex: 1, minHeight: 0 }}>
+        <ZonesPanel onUse={(ids) => { setSeed(ids); setTab("optimisations"); }} />
+      </Tabs.Panel>
+    </Tabs>
+  );
+}
+
+function OptimiseWorkspace({ seedParams, onSeeded }: { seedParams: string[] | null; onSeeded: () => void }) {
   const { environment, refreshProject } = useApp();
   const targets = useTargets();
   const metricInfo = useMetrics();
@@ -56,6 +81,21 @@ export function OptimisePage() {
   const [busy, setBusy] = useState(false);
   const metricOpts = Object.keys(metricInfo).map((k) => ({ value: k, label: `${k} — ${metricInfo[k].label}` }));
   const multi = objs.length > 1;
+
+  // "Optimise these" on the Shape zones tab: the zones' variables replace any shape variables
+  useEffect(() => {
+    if (!seedParams || !targets.length) return;
+    const keep = vars.filter((v) => !v.target.startsWith("param."));
+    const add: VariableDraft[] = [];
+    for (const id of seedParams) {
+      const t = targets.find((x) => x.target === `param.${id}`);
+      if (t) add.push(defaultVariable(t, [...keep, ...add]));
+    }
+    setVars([...keep, ...add]);
+    if (name === "Minimise drag") setName("Shape optimisation");
+    onSeeded();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seedParams, targets]);
 
   const parsedConditions = (): Record<string, number>[] => {
     // "yaw: 0, 5, 10" -> [{operating.yaw_deg: 0}, …]
@@ -214,6 +254,10 @@ function OptimisationView({ d, reload, onPromote }: { d: any; reload: () => void
     };
   }, [d]);
   const best = d.designs.find((x: any) => x.id === d.summary?.best_design_id);
+  const shapeVars = d.definition.variables.some((v: any) => String(v.target).startsWith("param."));
+  const [shapeId, setShapeId] = useState<string | null>(null);
+  const shown = shapeId ?? best?.id ?? null;
+  const shownDesign = d.designs.find((x: any) => x.id === shown);
   return (
     <Stack gap="sm" p="sm" h="100%">
       <StudyHeader d={d} reload={reload} />
@@ -228,12 +272,74 @@ function OptimisationView({ d, reload, onPromote }: { d: any; reload: () => void
           </Group>
         </Paper>
       )}
-      <Paper withBorder p={8}>
-        <EChart option={chart as any} height={240} />
-      </Paper>
-      <div style={{ flex: 1, minHeight: 0 }}>
-        <DesignTable d={d} metrics={metrics} highlight={pareto} onPromote={onPromote} />
+      {shapeVars && shown ? (
+        <SimpleGrid cols={{ base: 1, xl: 2 }} spacing="sm">
+          <Paper withBorder p={8}>
+            <EChart option={chart as any} height={360} />
+          </Paper>
+          <div>
+            <Text size="xs" c="dimmed" mb={4}>
+              Shape of design #{shownDesign?.idx}
+              {shown === best?.id ? " (best)" : ""} compared with the baseline — choose another with “Shape” in the table
+            </Text>
+            <DesignShape sid={d.id} designId={shown} />
+          </div>
+        </SimpleGrid>
+      ) : (
+        <Paper withBorder p={8}>
+          <EChart option={chart as any} height={240} />
+        </Paper>
+      )}
+      <div style={{ flex: 1, minHeight: 200 }}>
+        <DesignTable d={d} metrics={metrics} highlight={pareto} onPromote={onPromote} onShape={shapeVars ? setShapeId : undefined} shapeId={shown} />
       </div>
     </Stack>
+  );
+}
+
+/** A design's shape change against the study baseline: movement heat map + blend slider. */
+function DesignShape({ sid, designId }: { sid: string; designId: string }) {
+  const viewer = useRef<Viewer | null>(null);
+  const [t, setT] = useState(1);
+  const tRef = useRef(1);
+  const [m, setM] = useState<{ header: any; range: [number, number] } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const framed = useRef(false);
+
+  const load = async (v: Viewer) => {
+    setErr(null);
+    try {
+      const abg = decodeAbg(await api.binary(`/api/p/${pid()}/studies/${sid}/designs/${designId}/morph.abg`));
+      const range = showMorph(v, abg, tRef.current);
+      setM({ header: abg.header, range });
+      if (!framed.current) {
+        v.view("iso");
+        framed.current = true;
+      }
+    } catch (e) {
+      v.clearResults();
+      setM(null);
+      setErr(String((e as Error).message || e));
+    }
+  };
+  useEffect(() => {
+    if (viewer.current) load(viewer.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sid, designId]);
+
+  return (
+    <div style={{ height: 360, position: "relative", border: "1px solid var(--ab-line)", borderRadius: 6, overflow: "hidden" }}>
+      <Viewport3D onReady={(v) => { viewer.current = v; load(v); }}>
+        {err && (
+          <div className="ab-float" style={{ left: 12, top: 12, padding: 10, maxWidth: 320 }}>
+            <Hint>{err}</Hint>
+          </div>
+        )}
+        {m && (
+          <MorphControls compact header={m.header} range={m.range} t={t}
+            onT={(x) => { setT(x); tRef.current = x; viewer.current?.morphResult("morph", x); }} />
+        )}
+      </Viewport3D>
+    </div>
   );
 }

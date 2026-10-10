@@ -1,0 +1,28 @@
+# Exact versions of the engine's dependencies in the Windows runtime (prepare_python.py).
+# Pinned so that the Python runtime component stays identical between releases unless a
+# dependency is deliberately updated: an unchanged runtime is kept by the setup on update.
+# Update together with engine/pyproject.toml; check licences with packaging/licenses.py.
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.15.1
+cadquery-ocp-novtk==8.0.1.1.0
+cadquery-ocp-proxy==8.0.1.1.0
+click==8.5.0
+colorama==0.4.6
+fastapi==0.142.2
+h11==0.16.0
+idna==3.20
+jinja2==3.1.6
+markupsafe==3.0.4
+numpy==2.5.3
+opentelemetry-api==1.45.1
+psutil==7.2.2
+pydantic==2.13.5
+pydantic-core==2.46.5
+python-multipart==0.0.32
+scipy==1.18.1
+starlette==1.7.0
+typing-extensions==4.16.0
+typing-inspection==0.4.4
+uvicorn==0.54.0
+websockets==17.2

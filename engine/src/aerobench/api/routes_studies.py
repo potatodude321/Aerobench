@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from ..services import reports as rep
 from ..services import studies as svc
+from ..services import zones as zsvc
 from ..viz.payload import pack
 from .app import EngineState, engine
 
@@ -26,6 +27,16 @@ class ParamsBody(BaseModel):
 class ParamPreviewBody(BaseModel):
     values: dict[str, float] = {}
     parameters: Optional[list[dict[str, Any]]] = None
+    check: bool = True
+
+
+class ZonesBody(BaseModel):
+    zones: list[dict[str, Any]]
+
+
+class ZonePreviewBody(BaseModel):
+    values: dict[str, float] = {}
+    zones: Optional[list[dict[str, Any]]] = None  # unsaved zones (default: the project's)
     check: bool = True
 
 
@@ -90,7 +101,42 @@ def register(router: APIRouter) -> None:
 
     @router.post("/parameters/preview.abg")
     def parameters_preview(pid: str, body: ParamPreviewBody, e: EngineState = Depends(engine)):
-        header, blob = svc.parameter_preview(e.projects.get(pid), body.values, body.parameters, body.check)
+        p = e.projects.get(pid)
+        defs = None if body.parameters is None else svc.parse_parameters(body.parameters)
+        header, blob = zsvc.morph_preview(p, p.config, body.values, defs, body.check)
+        return Response(pack(header, blob), media_type="application/octet-stream")
+
+    # ---------------------------------------------------------------- shape zones
+    @router.get("/zones")
+    def zones(pid: str, e: EngineState = Depends(engine)):
+        p = e.projects.get(pid)
+        return {"zones": [z.model_dump(mode="json") for z in p.config.zones],
+                "parameters": [x.model_dump(mode="json") for x in p.config.parameters if x.deformation.kind == "zone"]}
+
+    @router.get("/zones/presets")
+    def zone_presets(pid: str, e: EngineState = Depends(engine)):
+        return {"presets": zsvc.presets(e.projects.get(pid))}
+
+    @router.put("/zones")
+    def zones_set(pid: str, body: ZonesBody, e: EngineState = Depends(engine)):
+        with e.projects.lock(pid):
+            return zsvc.set_zones(e.projects.get(pid), body.zones)
+
+    @router.post("/zones/freedom.abg")
+    def zones_freedom(pid: str, body: ZonePreviewBody, e: EngineState = Depends(engine)):
+        header, blob = zsvc.freedom_preview(e.projects.get(pid), body.zones)
+        return Response(pack(header, blob), media_type="application/octet-stream")
+
+    @router.post("/zones/preview.abg")
+    def zones_preview(pid: str, body: ZonePreviewBody, e: EngineState = Depends(engine)):
+        p = e.projects.get(pid)
+        defs = zsvc.parameters_with_zones(p, body.zones) if body.zones is not None else None
+        header, blob = zsvc.morph_preview(p, p.config, body.values, defs, body.check)
+        return Response(pack(header, blob), media_type="application/octet-stream")
+
+    @router.get("/studies/{sid}/designs/{design_id}/morph.abg")
+    def design_morph(pid: str, sid: str, design_id: str, e: EngineState = Depends(engine)):
+        header, blob = zsvc.design_morph(e.projects.get(pid), sid, design_id)
         return Response(pack(header, blob), media_type="application/octet-stream")
 
     # ---------------------------------------------------------------- reports

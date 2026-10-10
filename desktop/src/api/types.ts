@@ -100,6 +100,7 @@ export interface ProjectConfig {
   expert: { patches: any[]; file_overrides: any[]; extra_function_objects: Record<string, string>; notes: string | null };
   parameters: any[];
   parameter_values: Record<string, number>;
+  zones?: any[];
   studies: any[];
   optimisations: any[];
   notes: string;
@@ -107,7 +108,7 @@ export interface ProjectConfig {
 }
 
 /** none | current | running | stopped | failed | stale (only "stale" means the settings changed) */
-export type StageState = "none" | "current" | "running" | "stopped" | "failed" | "stale";
+export type StageState = "none" | "current" | "running" | "stopped" | "cancelled" | "failed" | "stale";
 
 export interface StageStatus {
   current: any;

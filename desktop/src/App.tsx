@@ -10,10 +10,11 @@ import {
   IconTargetArrow,
   IconTerminal2,
 } from "@tabler/icons-react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { api, events, initEngine } from "./api/client";
 import { bridge } from "./api/bridge";
 import type { ProjectPayload } from "./api/types";
+import { DemoGuide } from "./components/DemoGuide";
 import { notifyError, notifyOk } from "./components/notify";
 import { StatusDot } from "./components/ui";
 import { Section, useApp } from "./state/store";
@@ -106,6 +107,7 @@ function stepStates(project: ProjectPayload, activeJobs: any[], hasResults: bool
   if (meshJobs || m === "running") out.mesh = { state: "running", note: "Meshing", tip: "A mesh for the current settings is being generated" };
   else if (m === "current") out.mesh = { state: "done", tip: "A mesh exists for the current settings" };
   else if (m === "failed") out.mesh = { state: "issue", note: "Failed", tip: "Meshing with the current settings failed; see the Mesh page" };
+  else if (m === "cancelled") out.mesh = { state: "todo", note: "Cancelled", tip: "Meshing with the current settings was cancelled; generate it again, or a run meshes first" };
   else if (m === "stale") out.mesh = { state: "stale", note: "Not meshed", tip: "No mesh exists for the current settings yet; the next run meshes first" };
   else out.mesh = { state: "todo", tip: "Not meshed yet (a run meshes automatically)" };
   const ph = errs(/^(physics|operating|numerics)/);
@@ -116,6 +118,7 @@ function stepStates(project: ProjectPayload, activeJobs: any[], hasResults: bool
   else if (r === "current") out.run = { state: "done", tip: "A finished run exists for the current settings" };
   else if (r === "stopped") out.run = { state: "done", note: "Stopped", tip: "The run for the current settings was stopped; it can be resumed" };
   else if (r === "failed") out.run = { state: "issue", note: "Failed", tip: "The run for the current settings failed; see the Run page" };
+  else if (r === "cancelled") out.run = { state: "todo", note: "Cancelled", tip: "The run for the current settings was cancelled before it started" };
   else if (r === "stale") out.run = { state: "stale", note: "Not run", tip: "Nothing has been run with the current settings yet" };
   else out.run = { state: "todo", tip: "No run yet" };
   if (!hasResults) out.results = { state: "todo", tip: "No results yet" };
@@ -126,6 +129,8 @@ function stepStates(project: ProjectPayload, activeJobs: any[], hasResults: bool
 
 export default function App() {
   const { engineReady, engineError, project, section, setSection, expertMode, setExpert, setEngineReady, setEnvironment, setJobs, jobs, runs } = useApp();
+  const [guideHidden, setGuideHidden] = useState(false);
+  useEffect(() => setGuideHidden(false), [project?.project_id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -209,6 +214,7 @@ export default function App() {
 
   if (!project) return <Welcome />;
 
+  const showGuide = (project.config.tags || []).includes("demo") && !guideHidden;
   const running = jobs.active.filter((j: any) => j.status !== "queued").length;
   const queued = jobs.active.length - running;
   const hasResults = runs.some((r) => ["completed", "stopped", "interrupted"].includes(r.status) && r.metrics);
@@ -279,10 +285,13 @@ export default function App() {
           ))}
         </div>
       </nav>
-      <main className="ab-main">
-        <ErrorBoundary resetKey={section}>
-          <SectionContent section={section} />
-        </ErrorBoundary>
+      <main className="ab-main" style={showGuide ? { display: "flex", flexDirection: "column" } : undefined}>
+        {showGuide && <DemoGuide section={section} onGo={setSection} onClose={() => setGuideHidden(true)} />}
+        <div style={showGuide ? { flex: 1, minHeight: 0 } : { height: "100%" }}>
+          <ErrorBoundary resetKey={section}>
+            <SectionContent section={section} />
+          </ErrorBoundary>
+        </div>
       </main>
     </div>
   );

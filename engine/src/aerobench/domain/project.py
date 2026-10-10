@@ -13,7 +13,7 @@ from ..version import APP_VERSION, GENERATOR_VERSION
 from .common import Model
 from .execution import ExecutionConfig, SolverTarget
 from .expert import ExpertConfig
-from .exploration import GeometryParameter, OptimisationDefinition, StudyDefinition
+from .exploration import GeometryParameter, OptimisationDefinition, ShapeZone, StudyDefinition
 from .geometry import ComponentRole, GeometryConfig
 from .mesh import MeshConfig
 from .numerics import NumericsConfig
@@ -55,6 +55,7 @@ class ProjectConfig(Model):
     expert: ExpertConfig = Field(default_factory=ExpertConfig)
     parameters: list[GeometryParameter] = Field(default_factory=list)
     parameter_values: dict[str, float] = Field(default_factory=dict, description="Current values of geometry parameters")
+    zones: list[ShapeZone] = Field(default_factory=list, description="Shape zones; their parameters are generated into 'parameters'")
     studies: list[StudyDefinition] = Field(default_factory=list)
     optimisations: list[OptimisationDefinition] = Field(default_factory=list)
     notes: str = ""
@@ -181,7 +182,7 @@ def stage_hashes(cfg: ProjectConfig) -> dict[str, str]:
     }
 
 
-# --- scheme 1 (until 0.1.0 build 2): kept only to verify stored hashes before re-keying them
+# --- scheme 1 (0.1.0 and earlier): kept only to verify stored hashes before re-keying them
 def _v1_geometry(cfg: ProjectConfig) -> dict[str, Any]:
     out = {
         "revision": cfg.geometry.revision_id,

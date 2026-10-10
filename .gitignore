@@ -18,3 +18,4 @@ dist-electron/
 /desktop/test-results/
 /desktop/build-resources/.icon-ico/
 /packaging/cache/
+/desktop/build-resources/components.nsh

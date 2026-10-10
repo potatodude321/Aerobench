@@ -59,6 +59,7 @@ export function GeometryPage() {
   const fitted = useRef<number[] | null>(null); // vehicle size the camera was last fitted to
   const seq = useRef(0);
   const cfg = project!.config;
+  const isElement = cfg.application === "aero_element";
   const tr = cfg.geometry.transform;
   const current: Pose = pose ?? { forward: tr.forward_axis, up: tr.up_axis, scale: tr.unit_scale };
 
@@ -270,7 +271,7 @@ export function GeometryPage() {
       {!rev && <div style={{ marginTop: 20 }}>{importControls}</div>}
       {rev && (
         <>
-          <SectionTitle right={busy === "import" ? <Loader size={14} /> : undefined}>Vehicle</SectionTitle>
+          <SectionTitle right={busy === "import" ? <Loader size={14} /> : undefined}>{isElement ? "Element" : "Vehicle"}</SectionTitle>
           {geo.revisions.length > 1 && (
             <Select
               size="xs"
@@ -403,6 +404,7 @@ export function GeometryPage() {
             </Table.Tbody>
           </Table>
 
+          {!isElement && <>
           <SectionTitle>Wheels</SectionTitle>
           {wheels.length === 0 && (
             <DiagnosticList
@@ -441,6 +443,13 @@ export function GeometryPage() {
             <NumField label="Rake, nose down" units="°" value={cfg.vehicle.rake_deg} decimals={3}
               onCommit={(v) => patchConfig({ vehicle: { rake_deg: v } }).then(bumpGeometry)} description="About the rear contact" />
           </SimpleGrid>
+          </>}
+          {isElement && (
+            <>
+              <SectionTitle>Position</SectionTitle>
+              <Hint>The element's height over the ground and its angle are set on the Tunnel page.</Hint>
+            </>
+          )}
 
           <SectionTitle>Reference values</SectionTitle>
           <ReferenceEditor />
@@ -467,7 +476,8 @@ export function GeometryPage() {
     <PageLayout
       side={side}
       title="Geometry"
-      lede="Import the vehicle, check that it faces the right way, and review the parts and wheels found in it."
+      lede={isElement ? "Import the element (wing, flap, splitter), check that it faces the right way, and review its parts."
+        : "Import the vehicle, check that it faces the right way, and review the parts and wheels found in it."}
       footer={rev ? (
         <Button fullWidth variant="default" rightSection={<IconArrowRight size={15} />} onClick={() => setSection("tunnel")}>
           Continue to the tunnel
@@ -522,9 +532,20 @@ function ReferenceEditor() {
           <Checkbox size="xs" mt={6} label="Allow changing them anyway" checked={confirm} onChange={(e) => setConfirm(e.currentTarget.checked)} />
         </div>
       )}
+      <SegmentedControl size="xs" fullWidth disabled={locked} value={ref.area_source}
+        onChange={(v) => {
+          if (v === "computed_frontal") commit({ area_source: v, area: ref.area_computed });
+          else if (v === "computed_planform") commit({ area_source: v, area: ref.area_planform_computed });
+        }}
+        data={[
+          { value: "computed_frontal", label: "Frontal area" },
+          { value: "computed_planform", label: "Planform (from above)" },
+          { value: "manual", label: "Set by hand", disabled: true },
+        ]} />
       <SimpleGrid cols={2} spacing="xs">
         <NumField label="Area" units="m²" value={ref.area} decimals={5} disabled={locked}
-          description={ref.area_computed ? `Frontal area ${fmt(ref.area_computed, 4)} m²${ref.area_source === "manual" ? " (not used)" : ""}` : undefined}
+          description={[ref.area_computed != null && `frontal ${fmt(ref.area_computed, 4)}`, ref.area_planform_computed != null && `planform ${fmt(ref.area_planform_computed, 4)}`]
+            .filter(Boolean).join(", ") || undefined}
           onCommit={(v) => commit({ area: v, area_source: "manual" })} />
         <NumField label="Length" units="m" value={ref.length} decimals={4} disabled={locked}
           description={ref.length_source === "wheelbase" ? "Wheelbase" : ref.length_source === "vehicle_length" ? "Vehicle length" : "Set by hand"}
@@ -536,11 +557,7 @@ function ReferenceEditor() {
       <Hint>
         Moment centre ({ref.moment_centre_source.replace(/_/g, " ")}): {ref.moment_centre ? ref.moment_centre.map((x) => fmt(x, 3)).join(", ") : "—"} m
       </Hint>
-      {ref.area_source === "manual" && !ref.locked && (
-        <Button size="compact-xs" variant="subtle" style={{ alignSelf: "flex-start" }} onClick={() => commit({ area_source: "computed_frontal", area: ref.area_computed })}>
-          Use the computed frontal area
-        </Button>
-      )}
+      <Hint>Wings and splitters are usually compared on their planform area; vehicles on their frontal area.</Hint>
     </Stack>
   );
 }

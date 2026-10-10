@@ -55,6 +55,7 @@ export interface ProjectConfig {
     area_source: string;
     area_computed: number | null;
     area_computed_resolution: number | null;
+    area_planform_computed?: number | null;
     length: number | null;
     length_source: string;
     density: number;
@@ -101,6 +102,10 @@ export interface ProjectConfig {
   parameters: any[];
   parameter_values: Record<string, number>;
   zones?: any[];
+  /** "vehicle" (default) or "aero_element" */
+  application?: string;
+  element?: ElementSetup;
+  structure?: StructureConfig;
   studies: any[];
   optimisations: any[];
   notes: string;
@@ -129,6 +134,103 @@ export interface ProjectPayload {
     solve: StageStatus;
   };
   worker: any;
+  structure?: { last: { status: string; min_reserve: number | null; passed: boolean | null; required: number | null } | null };
+}
+
+export interface ElementSetup {
+  environment: "free_stream" | "ground_effect";
+  ground_clearance: number;
+  angle_deg: number;
+  free_stream_chords: number;
+}
+
+export interface Material {
+  id: string;
+  name: string;
+  kind: "isotropic" | "lamina";
+  density: number;
+  E?: number | null;
+  nu?: number | null;
+  yield_strength?: number | null;
+  ultimate_strength?: number | null;
+  E1?: number | null;
+  E2?: number | null;
+  G12?: number | null;
+  nu12?: number | null;
+  E3?: number | null;
+  G13?: number | null;
+  G23?: number | null;
+  nu23?: number | null;
+  Xt?: number | null;
+  Xc?: number | null;
+  Yt?: number | null;
+  Yc?: number | null;
+  S12?: number | null;
+  ply_thickness?: number | null;
+  source: string;
+  builtin: boolean;
+}
+
+export interface Ply {
+  material: string;
+  thickness: number;
+  angle: number;
+}
+
+export interface StructSection {
+  id: string;
+  name: string;
+  components: string[];
+  kind: "sheet" | "laminate";
+  material?: string | null;
+  thickness?: number | null;
+  plies: Ply[];
+  symmetric: boolean;
+  zero_direction: Vec3;
+}
+
+export interface SupportShape {
+  kind: "box" | "sphere" | "cylinder";
+  min?: Vec3;
+  max?: Vec3;
+  centre?: Vec3;
+  radius?: number;
+  point1?: Vec3;
+  point2?: Vec3;
+}
+
+export interface StructSupport {
+  id: string;
+  name: string;
+  shape: SupportShape;
+  enabled: boolean;
+}
+
+export interface StructureConfig {
+  model: "skin" | "plate";
+  plate_side: "upper" | "lower";
+  components: string[];
+  sections: StructSection[];
+  supports: StructSupport[];
+  materials: Material[];
+  run_id: string | null;
+  design_speed: number | null;
+  load_factor: number;
+  self_weight: boolean;
+  gravity: number;
+  required_reserve: number;
+  max_elements: number;
+}
+
+export interface StructureAnalysis {
+  id: string;
+  created_at: string;
+  label: string;
+  status: string;
+  job_id: string;
+  run_id: string;
+  summary: any | null;
+  message: string | null;
 }
 
 export interface Metrics {

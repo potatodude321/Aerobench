@@ -38,7 +38,7 @@ from ..structures.results import assess, parse_dat, summarise
 from .context import AppContext
 from .runs import run_record
 
-FORMAT = 4  # 2: loads on all S6 nodes; 4: edge division with flat quads
+FORMAT = 5  # 2: loads on all S6 nodes; 4: edge division with flat quads; 5: total-force check for one part
 
 
 def _err(code: str, msg: str, action: str = "", cat: ErrorCategory = ErrorCategory.CONFIGURATION) -> AeroBenchError:
@@ -108,17 +108,23 @@ def load_scale(st: StructureConfig, run_speed: float) -> float:
     return float(s)
 
 
-def _cfd_component_forces(project: Project, run: dict[str, Any], comps: list[str]) -> Optional[np.ndarray]:
-    """Total force of the parts from OpenFOAM's forces function objects (last iteration)."""
+def _cfd_component_forces(project: Project, run: dict[str, Any], comps: list[str], cfg: ProjectConfig) -> Optional[np.ndarray]:
+    """Total force of the parts from OpenFOAM's forces function objects (last iteration): one
+    per part when the case has them, else the case total when the parts are all of the model."""
     from ..results.ingest import load_force_history
 
-    tot = np.zeros(3)
-    for c in comps:
-        h = load_force_history(project.root / run["path"], fo_name=f"forces_{c}", default_cofr=(0.0, 0.0, 0.0))
-        if h is None or not len(h.time):
-            return None
-        tot += np.asarray(h.force[-1])
-    return tot
+    case = project.root / run["path"]
+
+    def last(fo: str) -> Optional[np.ndarray]:
+        h = load_force_history(case, fo_name=fo, default_cofr=(0.0, 0.0, 0.0))
+        return np.asarray(h.force[-1]) if h is not None and len(h.time) else None
+
+    per = [last(f"forces_{c}") for c in comps]
+    if all(f is not None for f in per):
+        return np.sum(per, axis=0)
+    if set(comps) == {c.id for c in cfg.geometry.components}:
+        return last("forces_total")
+    return None
 
 
 def prepare(project: Project, ctx: AppContext, viz, st: Optional[StructureConfig] = None) -> dict[str, Any]:
@@ -148,7 +154,7 @@ def prepare(project: Project, ctx: AppContext, viz, st: Optional[StructureConfig
         data = {k: d[k] for k in d.files}
     p_ref = float(cfg.operating.pressure or 0.0)
     mapped = map_loads(mesh, data, rho=cfg.physics.fluid.density, p_ref=p_ref)
-    cfd = _cfd_component_forces(project, run, mesh.part_ids)
+    cfd = _cfd_component_forces(project, run, mesh.part_ids, cfg)
     np.savez(cdir / "mesh.npz", points=mesh.points, tris=mesh.tris, part=mesh.part, part_ids=np.array(json.dumps(mesh.part_ids)),
              closed=np.array(json.dumps(mesh.closed_parts)))
     np.savez(cdir / "loads.npz", nodal=mapped.nodal, traction=mapped.tri_traction, total=mapped.total)
@@ -217,14 +223,11 @@ def loads_preview(project: Project, ctx: AppContext, viz) -> tuple[dict, bytes]:
     mesh, loads = _prep_data(project, info["key"])
     n = mesh.normals()
     pn = -(loads["traction"] * n).sum(axis=1) / 1000.0 * info["load_scale"]  # + = pushing into the part
-    sup = np.zeros(len(mesh.points))
-    for sp in st.supports:
-        if sp.enabled:
-            from ..structures.deck import support_nodes
+    from ..structures.deck import support_nodes
 
-            sup[support_nodes(mesh.points, sp.shape)] = 1.0
+    held = {sp.id: int(len(support_nodes(mesh.points, sp.shape))) for sp in st.supports}
     meta = {"scalar_name": "Load normal to the surface (+ pressing in)", "scalar_units": "kPa", "prepare": info,
-            "supported_nodes": int(sup.sum())}
+            "support_nodes": held}
     return _abg(mesh.points, mesh.tris, _node_field(mesh, pn), None, meta)
 
 

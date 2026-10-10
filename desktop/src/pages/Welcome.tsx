@@ -70,10 +70,10 @@ export function Welcome() {
     }
   };
 
-  const demo = async () => {
-    setBusy("demo");
+  const demo = async (kind: "ahmed" | "wing") => {
+    setBusy(`demo-${kind}`);
     try {
-      openProjectPayload(await api.post<ProjectPayload>("/api/projects/demo", { kind: "ahmed", parent: folder || null }));
+      openProjectPayload(await api.post<ProjectPayload>("/api/projects/demo", { kind, parent: folder || null }));
     } catch (e) {
       notifyError(e);
     } finally {
@@ -157,19 +157,26 @@ export function Welcome() {
               </Group>
             </Stack>
 
-            <SectionTitle>Or try the demo</SectionTitle>
-            <Group justify="space-between" wrap="nowrap" gap={16} align="flex-start">
-              <div style={{ minWidth: 0 }}>
-                <Text fw={500}>Ahmed body</Text>
-                <Text size="xs" c="var(--ab-text-3)">
-                  The classic reference body, ready to run: mesh refinement regions and shape zones are set up, and a guide on each page walks
-                  through the workflow. A first run takes a few minutes.
-                </Text>
-              </div>
-              <Button variant="default" onClick={demo} loading={busy === "demo"} disabled={!!busy && busy !== "demo"} style={{ flexShrink: 0 }}>
-                Open the demo
-              </Button>
-            </Group>
+            <SectionTitle>Or try a demo</SectionTitle>
+            <Stack gap={14}>
+              {([
+                ["ahmed", "Ahmed body", "The classic reference body, ready to run: mesh refinement regions and shape zones are set up, and a guide on each page walks through the workflow. A first run takes a few minutes."],
+                ["wing", "Front wing", "A wing in ground effect studied on its own, then checked for strength: its loads go onto a carbon skin held by two mounts, and CalculiX checks every ply."],
+              ] as const).map(([kind, title, text]) => (
+                <Group key={kind} justify="space-between" wrap="nowrap" gap={16} align="flex-start">
+                  <div style={{ minWidth: 0 }}>
+                    <Text fw={500}>{title}</Text>
+                    <Text size="xs" c="var(--ab-text-3)">
+                      {text}
+                    </Text>
+                  </div>
+                  <Button variant="default" onClick={() => demo(kind)} loading={busy === `demo-${kind}`} disabled={!!busy && busy !== `demo-${kind}`}
+                    style={{ flexShrink: 0 }} aria-label={`Open the ${title.toLowerCase()} demo`}>
+                    Open the demo
+                  </Button>
+                </Group>
+              ))}
+            </Stack>
 
             <SectionTitle>This computer</SectionTitle>
             <EnvironmentCard />

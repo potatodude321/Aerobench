@@ -30,6 +30,7 @@ import { ReportPage } from "./pages/ReportPage";
 import { ResultsPage } from "./pages/ResultsPage";
 import { RunPage } from "./pages/RunPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { StructurePage } from "./pages/structure/StructurePage";
 import { StudiesPage } from "./pages/StudiesPage";
 import { TunnelPage } from "./pages/TunnelPage";
 import { Welcome } from "./pages/Welcome";
@@ -43,6 +44,8 @@ const WORKFLOW: { id: Section; label: string }[] = [
   { id: "run", label: "Run" },
   { id: "results", label: "Results" },
 ];
+/** An aero element studied alone continues into its structural check. */
+const ELEMENT_WORKFLOW: { id: Section; label: string }[] = [...WORKFLOW, { id: "structure", label: "Structure" }];
 const ANALYSIS: { id: Section; label: string; icon: any }[] = [
   { id: "compare", label: "Compare", icon: IconArrowsDiff },
   { id: "studies", label: "Studies", icon: IconTable },
@@ -70,6 +73,8 @@ function SectionContent({ section }: { section: Section }) {
       return <RunPage />;
     case "results":
       return <ResultsPage />;
+    case "structure":
+      return <StructurePage />;
     case "compare":
       return <ComparePage />;
     case "studies":
@@ -124,6 +129,15 @@ function stepStates(project: ProjectPayload, activeJobs: any[], hasResults: bool
   if (!hasResults) out.results = { state: "todo", tip: "No results yet" };
   else if (r === "stale" || r === "failed") out.results = { state: "stale", note: "Earlier settings", tip: "The results shown are from runs with other settings" };
   else out.results = { state: "done", tip: "Results available" };
+  const feaJobs = activeJobs.filter((j) => j.kind === "fea").length;
+  const last = project.structure?.last;
+  if (feaJobs) out.structure = { state: "running", note: "Checking", tip: "CalculiX is solving the structure" };
+  else if (!hasResults) out.structure = { state: "todo", tip: "Needs the loads of a finished flow simulation" };
+  else if (!last) out.structure = { state: "todo", tip: "No structural check yet" };
+  else if (last.status === "failed") out.structure = { state: "issue", note: "Failed", tip: "The last structural check did not finish; see the Structure page" };
+  else if (last.status === "completed" && last.passed === false) out.structure = { state: "issue", note: `Reserve ${last.min_reserve?.toFixed(2) ?? "—"}`, tip: "The part does not meet the required reserve factor" };
+  else if (last.status === "completed") out.structure = { state: "done", note: `Reserve ${last.min_reserve?.toFixed(1) ?? "—"}`, tip: "The part holds with the required reserve" };
+  else out.structure = { state: "todo", tip: "No structural check yet" };
   return out;
 }
 
@@ -174,6 +188,16 @@ export default function App() {
                 else if (run && ["failed", "cancelled"].includes(run.status)) notifyError(new Error("See the Run page for the reason."), `Run ${run.label} did not finish`);
               } else if (r.kind === "mesh" && r.status === "completed") {
                 notifyOk("Open the Mesh page to inspect it.", "Mesh ready");
+              } else if (r.kind === "fea") {
+                api.get(`/api/p/${useApp.getState().project?.project_id}/structure/analyses`).then((list: any[]) => {
+                  const a = list.find((x) => x.id === r.target_id);
+                  if (a?.status === "completed" && a.summary) {
+                    const s = a.summary;
+                    const reserve = `Smallest reserve factor ${s.min_reserve?.toFixed(2) ?? "—"} (required ${s.required_reserve})`;
+                    if (s.passed) notifyOk(`${reserve}; largest deflection ${((s.max_displacement || 0) * 1000).toFixed(1)} mm.`, "Structural check: the part holds");
+                    else notifyError(new Error(`${reserve}. Open the Structure page for the weak point.`), "Structural check: not strong enough");
+                  } else if (a && a.status === "failed") notifyError(new Error(a.message || "See the Structure page."), "Structural check did not finish");
+                }).catch(() => undefined);
               }
             }
           });
@@ -219,6 +243,7 @@ export default function App() {
   const queued = jobs.active.length - running;
   const hasResults = runs.some((r) => ["completed", "stopped", "interrupted"].includes(r.status) && r.metrics);
   const states = stepStates(project, jobs.active, hasResults);
+  const workflow = project.config.application === "aero_element" ? ELEMENT_WORKFLOW : WORKFLOW;
   const errors = project.validation.filter((v) => v.severity === "error");
 
   return (
@@ -247,7 +272,7 @@ export default function App() {
       <nav className="ab-rail" aria-label="Sections">
         <div className="ab-rail-group">Workflow</div>
         <div className="ab-seq">
-          {WORKFLOW.map((s, i) => {
+          {workflow.map((s, i) => {
             const st = states[s.id];
             return (
               <Tooltip key={s.id} label={st.tip} position="right" openDelay={500} disabled={!st.note}>
@@ -286,7 +311,7 @@ export default function App() {
         </div>
       </nav>
       <main className="ab-main" style={showGuide ? { display: "flex", flexDirection: "column" } : undefined}>
-        {showGuide && <DemoGuide section={section} onGo={setSection} onClose={() => setGuideHidden(true)} />}
+        {showGuide && <DemoGuide section={section} kind={(project.config.tags || []).includes("wing") ? "wing" : "ahmed"} onGo={setSection} onClose={() => setGuideHidden(true)} />}
         <div style={showGuide ? { flex: 1, minHeight: 0 } : { height: "100%" }}>
           <ErrorBoundary resetKey={section}>
             <SectionContent section={section} />

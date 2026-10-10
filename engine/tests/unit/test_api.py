@@ -163,3 +163,38 @@ def test_new_projects_default_to_the_machine_cores(client, tmp_path, monkeypatch
     r = client.post("/api/projects", json={"path": str(tmp_path / "With space" / "P"), "name": "Spaced"})
     expected = 1 if client.app.state.engine.ctx.provider().kind == "local-posix" else 6
     assert r.json()["config"]["execution"]["n_procs"] == expected
+
+
+def test_wing_demo_and_structure_routes(client, tmp_path):
+    r = client.post("/api/projects/demo", json={"kind": "wing", "parent": str(tmp_path / "demos")})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    pid = d["project_id"]
+    cfg = d["config"]
+    assert cfg["application"] == "aero_element" and "wing" in cfg["tags"] and d["structure"] == {"last": None}
+    assert cfg["reference"]["area_source"] == "computed_planform"
+    # the element sits 60 mm over the ground at 5 degrees
+    r = client.patch(f"/api/p/{pid}/element", json={"ground_clearance": 0.05})
+    assert r.status_code == 200 and r.json()["clearance"] == pytest.approx(0.05)
+    s = client.get(f"/api/p/{pid}/structure").json()
+    assert s["runs"] == [] and s["analysed"] == ["front_wing"] and s["structure"]["sections"] and len(s["structure"]["supports"]) == 2
+    assert {m["id"] for m in s["materials"]["builtin"]} >= {"cfrp_ud_t700", "al_6061_t6"}
+    pre = client.get(f"/api/p/{pid}/structure/presets").json()
+    assert {p["preset"] for p in pre["supports"]} == {"ends", "pylons", "centre", "rear_edge"}
+    # a structural check needs the loads of a finished flow simulation
+    r = client.post(f"/api/p/{pid}/structure/analyses", json={})
+    assert r.status_code == 400 and r.json()["error"]["code"] in ("structure.no_run", "structure.no_ccx")
+    # settings round trip, invalid ones refused
+    st = s["structure"] | {"required_reserve": 2.0}
+    assert client.put(f"/api/p/{pid}/structure", json={"structure": st}).json()["required_reserve"] == 2.0
+    bad = st | {"sections": [st["sections"][0] | {"plies": []}]}
+    assert client.put(f"/api/p/{pid}/structure", json={"structure": bad}).status_code == 422
+    # the user's material library
+    m = {"name": "Test ply", "kind": "lamina", "density": 1500, "E1": 120e9, "E2": 8e9, "G12": 4e9, "nu12": 0.3,
+         "Xt": 1.8e9, "Xc": 1.1e9, "Yt": 40e6, "Yc": 180e6, "S12": 70e6}
+    assert client.put("/api/materials/test_ply", json=m).status_code == 200
+    assert [x["id"] for x in client.get("/api/materials").json()["user"]] == ["test_ply"]
+    assert client.put("/api/materials/cfrp_ud_t700", json=m).status_code == 400  # built-in ids are reserved
+    assert client.put("/api/materials/odd", json=m | {"nu12": 0.95, "E2": 200e9}).status_code == 422
+    assert client.delete("/api/materials/test_ply").status_code == 200
+    assert client.get("/api/materials").json()["user"] == []

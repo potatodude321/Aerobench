@@ -6,7 +6,9 @@ import { ActionIcon, Button, Text } from "@mantine/core";
 import { IconArrowRight, IconX } from "@tabler/icons-react";
 import type { Section } from "../state/store";
 
-const STEPS: { id: Section; label: string; text: string }[] = [
+type Step = { id: Section; label: string; text: string };
+
+const AHMED_STEPS: Step[] = [
   { id: "geometry", label: "Geometry", text: "The Ahmed body is already imported: the body and its four stilts, nose upstream. Nothing to do here." },
   { id: "tunnel", label: "Tunnel", text: "A large tunnel over a stationary floor, as in the original experiment, so no blockage correction is needed." },
   { id: "mesh", label: "Mesh", text: "A coarse mesh (about 0.3 million cells) with two extra refinement regions of the demo, “Rear slant and base” and “Wake behind the slant”. Generate it here to inspect the cells, or go straight to Run, which meshes first." },
@@ -16,7 +18,18 @@ const STEPS: { id: Section; label: string; text: string }[] = [
   { id: "optimise", label: "Optimise", text: "Shape zones over the rear slant and the rear taper are ready (Shape zones tab). Try a change, then “Optimise these”; start with 6 to 8 designs, each is a full run." },
 ];
 
-export function DemoGuide({ section, onGo, onClose }: { section: Section; onGo: (s: Section) => void; onClose: () => void }) {
+const WING_STEPS: Step[] = [
+  { id: "geometry", label: "Geometry", text: "A single-element front wing (inverted NACA 4412, 280 mm chord, 1.2 m span) is imported. Its reference area is the planform seen from above." },
+  { id: "tunnel", label: "Tunnel", text: "The wing sits 60 mm over a road moving with the air, at 5° (trailing edge up). Try another height or angle here: the pose updates at once." },
+  { id: "mesh", label: "Mesh", text: "A coarse mesh with finer cells at the leading and trailing edges. Generate it here to inspect it, or go straight to Run, which meshes first." },
+  { id: "physics", label: "Physics", text: "40 m/s with the k-ω SST model; the run stops by itself once converged (800 iterations at most)." },
+  { id: "run", label: "Run", text: "Start the run and follow residuals, forces and the time left. Downforce grows as the wing nears the ground." },
+  { id: "results", label: "Results", text: "Suction under the wing, strongest near the ground: that pressure is what the structure has to carry." },
+  { id: "structure", label: "Structure", text: "A 1.1 mm carbon twill skin held by two mounts is set up. Check the loads, run the structural check, then try thinner layups or other mounts." },
+];
+
+export function DemoGuide({ section, kind, onGo, onClose }: { section: Section; kind: "ahmed" | "wing"; onGo: (s: Section) => void; onClose: () => void }) {
+  const STEPS = kind === "wing" ? WING_STEPS : AHMED_STEPS;
   const i = STEPS.findIndex((s) => s.id === section);
   const step = STEPS[i];
   const next = i >= 0 ? STEPS[i + 1] : STEPS[0];

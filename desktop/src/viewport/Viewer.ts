@@ -502,7 +502,7 @@ export class Viewer {
    * Blend a result that carries per-vertex displacement vectors between its base shape (t = 0)
    * and the changed shape (t = 1); the colours follow the same fraction of the change.
    */
-  morphResult(id: string, t: number): void {
+  morphResult(id: string, t: number, coloursFollow = true): void {
     const e = this.resultMap.get(id);
     if (!e || !e.abg.vectors) return;
     const geo = (e.object as THREE.Mesh).geometry as THREE.BufferGeometry;
@@ -514,7 +514,8 @@ export class Viewer {
     pos.needsUpdate = true;
     geo.computeVertexNormals();
     geo.computeBoundingSphere();
-    this.recolor(id, { ...e.style, scalarScale: t });
+    if (coloursFollow) this.recolor(id, { ...e.style, scalarScale: t });
+    else this.dirty = true;
   }
 
   removeResult(id: string): void {

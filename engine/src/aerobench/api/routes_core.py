@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from pathlib import Path
 from typing import Any, Optional
 
@@ -98,7 +100,18 @@ def _project_payload(p: Project, e: EngineState) -> dict[str, Any]:
         "validation": [i.model_dump(mode="json") for i in validate_project(p.config)],
         "staleness": p.staleness(),
         "worker": lock_holder(p.root),
+        "structure": _structure_brief(p),
     }
+
+
+def _structure_brief(p: Project) -> dict[str, Any]:
+    """The latest structural check, for the workflow rail."""
+    row = p.db.one("SELECT status, summary_json FROM structure_runs ORDER BY created_at DESC LIMIT 1")
+    if row is None:
+        return {"last": None}
+    summ = json.loads(row["summary_json"]) if row["summary_json"] else {}
+    return {"last": {"status": row["status"], "min_reserve": summ.get("min_reserve"), "passed": summ.get("passed"),
+                     "required": summ.get("required_reserve")}}
 
 
 @router.post("/projects")
@@ -129,14 +142,15 @@ class CreateDemo(BaseModel):
 
 @router.post("/projects/demo")
 def create_demo(body: CreateDemo, e: EngineState = Depends(engine)):
-    """A ready-made Ahmed body project (geometry, mesh regions, shape zones) for trying the
-    whole workflow without any files."""
-    from ..services.demo import create_ahmed_demo
+    """A ready-made project for trying a whole workflow without any files: the Ahmed body
+    (vehicle: mesh regions, shape zones) or a front wing (aero element and structural check)."""
+    from ..services.demo import create_ahmed_demo, create_wing_demo
 
-    if body.kind != "ahmed":
+    makers = {"ahmed": create_ahmed_demo, "wing": create_wing_demo}
+    if body.kind not in makers:
         raise AeroBenchError.make("project.demo_unknown", ErrorCategory.PROJECT, f"Unknown demo '{body.kind}'.")
     parent = Path(body.parent) if body.parent else Path(e.ctx.settings.default_projects_dir())
-    p = create_ahmed_demo(parent, cores=e.ctx.default_cores(parent))
+    p = makers[body.kind](parent, cores=e.ctx.default_cores(parent))
     e.projects.add(p)
     e.ctx.settings.add_recent(str(p.root))
     e.ctx.settings.save()

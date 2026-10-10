@@ -48,6 +48,16 @@ const MAPS: Record<string, Stop[]> = {
     [0.7, 0.62, 0.72, 0.62],
     [1, 0.93, 0.78, 0.4],
   ],
+  /** reserve factor over [0, 2 x required]: failure red, below the requirement amber, ample cool */
+  Reserve: [
+    [0, 0.55, 0.06, 0.1],
+    [0.32, 0.88, 0.3, 0.27],
+    [0.34, 0.91, 0.55, 0.25],
+    [0.5, 0.92, 0.79, 0.36],
+    [0.52, 0.55, 0.78, 0.55],
+    [0.75, 0.42, 0.66, 0.74],
+    [1, 0.36, 0.45, 0.62],
+  ],
   "Blue - Red": [
     [0, 0.0, 0.0, 1.0],
     [0.5, 1.0, 1.0, 1.0],
@@ -55,7 +65,25 @@ const MAPS: Record<string, Stop[]> = {
   ],
 };
 
-export const COLORMAPS = Object.keys(MAPS);
+/** maps offered for result fields (special-purpose maps left out) */
+export const COLORMAPS = Object.keys(MAPS).filter((k) => !["Reserve", "Shape freedom"].includes(k));
+
+/**
+ * The "Reserve" map for a range of [0, 2 x required]: below 1 (failure) red, between 1 and the
+ * required reserve amber, at or above it green turning cool where there is plenty.
+ */
+export function setReserveColormap(required: number): void {
+  const t1 = Math.min(0.49, 1 / (2 * Math.max(required, 1.0001)));
+  MAPS.Reserve = [
+    [0, 0.55, 0.06, 0.1],
+    [Math.max(0, t1 - 0.01), 0.88, 0.3, 0.27],
+    [t1 + 0.005, 0.91, 0.55, 0.25],
+    [0.495, 0.92, 0.79, 0.36],
+    [0.505, 0.55, 0.78, 0.55],
+    [0.75, 0.42, 0.66, 0.74],
+    [1, 0.36, 0.45, 0.62],
+  ];
+}
 
 export function sampleColormap(name: string, t: number, out: Float32Array | number[], o = 0): void {
   const stops = MAPS[name] || MAPS["Cool to Warm"];

@@ -136,6 +136,9 @@ export const api = {
       ),
     );
   },
+  del<T = any>(path: string): Promise<T> {
+    return ordered(path, async () => handle<T>(await fetch(engineUrl(path), { method: "DELETE", headers: headers() })));
+  },
   async binary(path: string): Promise<ArrayBuffer> {
     const r = await fetch(engineUrl(path), { headers: headers() });
     if (!r.ok) await handle(r);

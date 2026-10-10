@@ -161,6 +161,8 @@ class Worker:
                 self.db.update("runs", "id", job["target_id"], {"status": "failed", "diagnostics_json": [diag]})
             elif job["kind"] == "mesh" and job["target_id"]:
                 self.db.update("mesh_revisions", "id", job["target_id"], {"status": "failed"})
+            elif job["kind"] == "fea" and job["target_id"]:
+                self.db.update("structure_runs", "id", job["target_id"], {"status": "failed", "message": diag["summary"]})
         except Exception:  # noqa: BLE001
             pass
 
@@ -215,6 +217,8 @@ class Worker:
                 self.db.update("runs", "id", j["target_id"], {"status": "running"})
             elif j["target_kind"] == "mesh":
                 self.db.update("mesh_revisions", "id", j["target_id"], {"status": "running"})
+            elif j["target_kind"] == "structure":
+                self.db.update("structure_runs", "id", j["target_id"], {"status": "running"})
             report["launched"].append(j["id"])
             budget -= j["cores"]
             busy += j["cores"]

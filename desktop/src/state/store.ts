@@ -10,6 +10,7 @@ export type Section =
   | "physics"
   | "run"
   | "results"
+  | "structure"
   | "compare"
   | "studies"
   | "optimise"

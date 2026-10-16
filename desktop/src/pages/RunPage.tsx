@@ -269,6 +269,11 @@ function RunMonitor({ runId, jobs, onResults }: { runId: string; jobs: any; onRe
           </Group>
         </Group>
         <Progress value={pct} mt={12} size="xs" animated={live} color={run.status === "failed" ? "red" : undefined} />
+        {live && st?.message && (
+          <Text size="xs" c="yellow" mt={6}>
+            {st.message}
+          </Text>
+        )}
         {waiting ? (
           <Group justify="space-between" mt={6} wrap="nowrap">
             <Text size="xs" c="dimmed">

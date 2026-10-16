@@ -320,9 +320,18 @@ export function DesignTable({ d, metrics, highlight, onPromote, onShape, shapeId
                 )}
                 <Table.Td>
                   {x.status === "failed" ? (
-                    <Tooltip label={x.error?.message || ""} multiline w={360}>
-                      <Text size="xs" c="red" lineClamp={1} maw={260}>{x.error?.message}</Text>
-                    </Tooltip>
+                    <Group gap={6} wrap="nowrap">
+                      <Tooltip label={x.error?.message || ""} multiline w={360}>
+                        <Text size="xs" c="red" lineClamp={1} maw={260}>{x.error?.message}</Text>
+                      </Tooltip>
+                      {(x.run_ids || []).slice(-1).map((r: any) => (
+                        <Tooltip key={r.run_id} label="What the solver or mesher printed before it failed">
+                          <Text size="xs" c="var(--ab-accent)" style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => openRunLog(r.run_id)}>
+                            log
+                          </Text>
+                        </Tooltip>
+                      ))}
+                    </Group>
                   ) : (
                     <Group gap={4}>
                       {(x.run_ids || []).map((r: any) => (

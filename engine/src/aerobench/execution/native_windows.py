@@ -116,6 +116,9 @@ class NativeWindowsProvider(ExecutionProvider):
     kind = "native-windows"
     staging = "in_place"
 
+    # Microsoft MPI cannot run two local parallel jobs side by side (see jobs/mpilock.py)
+    one_mpi_job_at_a_time = True
+
     def __init__(self, provider_id: str = "native", config: Optional[dict[str, Any]] = None):
         super().__init__(provider_id, config)
 

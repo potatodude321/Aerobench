@@ -86,6 +86,8 @@ def staged_case_key(case_dir: Path) -> str:
 class ExecutionProvider(ABC):
     kind: str = ""
     staging: str = "in_place"
+    # parallel (MPI) jobs must not run side by side on this computer (jobs/mpilock.py)
+    one_mpi_job_at_a_time: bool = False
 
     def __init__(self, provider_id: str, config: Optional[dict[str, Any]] = None):
         self.id = provider_id

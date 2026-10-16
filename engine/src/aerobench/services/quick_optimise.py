@@ -164,6 +164,13 @@ def _goal_zones(project: Project, goal: str) -> tuple[list[dict[str, Any]], list
     return add, enable
 
 
+def _one_mpi_job(ctx: AppContext, cfg: ProjectConfig) -> bool:
+    try:
+        return bool(getattr(ctx.provider(cfg.execution.provider_id), "one_mpi_job_at_a_time", False))
+    except AeroBenchError:
+        return False
+
+
 def _describe_move(var: dict[str, Any]) -> str:
     return f"{var['label']} (±{max(abs(var['lower']), abs(var['upper'])):g} mm)"
 
@@ -258,6 +265,8 @@ def plan(project: Project, ctx: AppContext, goal: str) -> Plan:
         pl.notes.append(f"{d} variables: the search is short for so many; consider fewer zones.")
     cores = max(1, min(cfg.execution.n_procs or 1, ctx.max_cores()))
     concurrent = max(1, min(4, ctx.max_cores() // cores))
+    if cores > 1 and concurrent > 1 and _one_mpi_job(ctx, cfg):
+        concurrent = 1  # parallel runs cannot share this computer (Microsoft MPI): one design at a time, all cores
     pl.designs, pl.concurrent = budget, concurrent
     pl.seconds_per_design = _seconds_per_design(project, run)
     if run is not None and run.get("n_procs") and run["n_procs"] != cores and pl.seconds_per_design:

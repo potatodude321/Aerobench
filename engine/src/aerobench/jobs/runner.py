@@ -24,6 +24,7 @@ from ..core.ids import utc_now_iso
 from ..execution.registry import provider_from_dict
 from ..foam.case.builder import STOP_FO_NAME
 from ..foam.logs.classify import classify
+from .mpilock import MpiLock, needs_lock, waiting_message
 from .process import create_time, kill_tree, popen_kwargs
 from .spec import (
     CopyStep,
@@ -326,7 +327,16 @@ class Runner:
         trig = self.case_dir / STOP_FO_NAME
         if trig.exists():
             trig.unlink()
-        rc = self._exec(spec.argv, env, spec.cwd or str(self.case_dir), log, solver=step.solver)
+        lock = MpiLock() if needs_lock(self.provider, step.nprocs) else None
+        try:
+            if lock is not None and not self._wait_for_mpi(lock, log, step.name):
+                return True  # stopped while waiting
+            rc = self._exec(spec.argv, env, spec.cwd or str(self.case_dir), log, solver=step.solver)
+        finally:
+            if lock is not None:
+                lock.close()
+                if self.state.message == waiting_message():
+                    self.state.message = ""
         st.exit_code = rc
         text = log.read_text(errors="replace") if log.exists() else ""
         if self._stopped:
@@ -340,6 +350,32 @@ class Runner:
             st.diagnostics.extend(diags)
             self.state.diagnostics.extend(diags)
         return ok
+
+    def _wait_for_mpi(self, lock: MpiLock, log: Path, step_name: str) -> bool:
+        """Hold the computer's MPI lock before a parallel step (see mpilock). False if the job
+        was stopped while it waited."""
+        if lock.acquire(0.0):
+            return True
+        self.state.message = waiting_message()
+        self.save()
+        self.event("waiting_for_mpi", step=step_name)
+        with open(log, "ab") as fh:
+            fh.write(f"# aerobench: {utc_now_iso()} :: {waiting_message()}\n".encode())
+        while not lock.acquire(1.0):
+            req = self.control()
+            if req in ("stop", "kill"):
+                self._stopped = True
+                self.state.status = JobStatus.STOPPING
+                self.state.stop_requested = req
+                self.save()
+                return False
+            if time.time() - self._last_hb > HEARTBEAT:
+                self._last_hb = time.time()
+                self.save()
+        self.event("mpi_acquired", step=step_name)
+        with open(log, "ab") as fh:
+            fh.write(f"# aerobench: {utc_now_iso()} :: starting\n".encode())
+        return True
 
     def _trigger_staged(self) -> bool:
         """Write the graceful-stop trigger into the staged copy the solver is reading."""

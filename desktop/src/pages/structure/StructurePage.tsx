@@ -521,7 +521,7 @@ export function StructurePage() {
         {preparing && (
           <div className="ab-viewport-note">
             <Loader size={12} color="ice" />
-            {view === "loads" ? "Preparing the shell model and mapping the loads…" : "Loading the result…"}
+            {view === "loads" ? "Remeshing the surface for the shell model and mapping the loads (up to a minute or two for a large part)…" : "Loading the result…"}
           </div>
         )}
         {view === "loads" && !runAvailable && (

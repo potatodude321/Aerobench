@@ -18,7 +18,7 @@ from ..geometry.components import identify_components
 from ..geometry.frontal_area import projected_area
 from ..geometry.inspect import UNIT_CANDIDATES, inspect_surface, with_units
 from ..geometry.io import read_surface
-from ..geometry.pose import posed_components
+from ..geometry.pose import place_in_cfd_frame, posed_components
 from ..geometry.trisurface import TriSurface
 from ..project.store import Project
 
@@ -75,6 +75,152 @@ def import_geometry(
         "units_auto_applied": auto_applied,
         "identification": ident,
     }
+
+
+BODY_ROLES = (ComponentRole.BODY, ComponentRole.WING, ComponentRole.SPOILER, ComponentRole.SPLITTER, ComponentRole.DIFFUSER,
+              ComponentRole.FLOOR, ComponentRole.MIRROR, ComponentRole.COOLING_INLET, ComponentRole.COOLING_OUTLET, ComponentRole.OTHER)
+
+
+def _slug(text: str, taken: set[str]) -> str:
+    import re
+
+    base = re.sub(r"[^A-Za-z0-9_]+", "_", text).strip("_") or "part"
+    if not re.match(r"^[A-Za-z_]", base):
+        base = "p_" + base
+    base = base[:40]
+    out, k = base, 2
+    while out in taken:
+        out = f"{base}_{k}"
+        k += 1
+    taken.add(out)
+    return out
+
+
+def _closed_and_volume(s: TriSurface) -> tuple[bool, float]:
+    from ..geometry.fastops import unique_int_rows
+
+    if not s.n_faces:
+        return False, 0.0
+    e = np.sort(np.concatenate([s.faces[:, [0, 1]], s.faces[:, [1, 2]], s.faces[:, [2, 0]]]), axis=1)
+    _, cnt = unique_int_rows(e, return_counts=True)
+    t = s.points[s.faces]
+    vol = float(np.einsum("ij,ij->i", t[:, 0], np.cross(t[:, 1], t[:, 2])).sum()) / 6.0
+    return bool(np.all(cnt == 2)), vol
+
+
+def add_bodies(project: Project, paths: list[Path], as_: str = "parts", units: str = "same", role: str = "other",
+               level: Optional[int] = None, names: Optional[list[str]] = None) -> dict[str, Any]:
+    """Add bodies to the imported geometry, read as coming from the same source: the same units,
+    axes and placement, so they sit where they were modelled relative to the parts already there.
+
+    ``as_="parts"``: each file (or each named solid in it) becomes a part (a wall with forces),
+    with ``role``. ``as_="refinement"``: each file must be a closed volume; the mesh is refined
+    inside it to ``level`` (a refinement zone you modelled yourself)."""
+    cfg = project.config
+    if not cfg.geometry.revision_id:
+        raise AeroBenchError.make("geometry.missing", ErrorCategory.GEOMETRY, "Import the main geometry first; added bodies are placed relative to it.")
+    if as_ not in ("parts", "refinement"):
+        raise AeroBenchError.make("geometry.add_kind", ErrorCategory.GEOMETRY, f"Unknown kind of body '{as_}'.")
+    if units != "same" and units not in UNIT_CANDIDATES:
+        raise AeroBenchError.make("geometry.units_unknown", ErrorCategory.GEOMETRY, f"Unknown unit '{units}'.")
+    tr = cfg.geometry.transform
+    # bring the new files' raw coordinates into the raw frame of the geometry already imported
+    factor = 1.0 if units == "same" else UNIT_CANDIDATES[units] / tr.unit_scale
+    current = project.raw_surface()
+    _, placed = place_in_cfd_frame(current, tr)  # the translation the parts have now: kept, so nothing moves
+    frozen = placed.model_copy(update={"auto_place": False})
+    files = [Path(p) for p in paths]
+    if not files:
+        raise AeroBenchError.make("geometry.add_none", ErrorCategory.GEOMETRY, "Choose at least one file.")
+    raws = []
+    for i, f in enumerate(files):
+        raw = read_surface(f)
+        if raw.n_faces == 0:
+            raise AeroBenchError.make("geometry.empty_file", ErrorCategory.GEOMETRY, f"'{f.name}' contains no triangles.")
+        raws.append((f, TriSurface(raw.points * factor, raw.faces, raw.regions, list(raw.region_names)),
+                     (names[i] if names and i < len(names) and names[i] else f.stem)))
+    if as_ == "parts":
+        r = ComponentRole(role)
+        if r not in BODY_ROLES:
+            raise AeroBenchError.make("geometry.add_role", ErrorCategory.GEOMETRY, f"Added parts cannot have the role '{role}'.",
+                                      action="Wheels are found from the main geometry; add them there.")
+        taken_regions = set(current.region_names)
+        taken_ids = {c.id for c in cfg.geometry.components}
+        new_surfs, new_comps, labels = [], [], []
+        for f, raw, label in raws:
+            used = sorted(set(np.unique(raw.regions).tolist()))
+            rename = {}
+            for k in used:
+                rn = raw.region_names[k]
+                stem = label if len(used) == 1 else f"{label}_{rn}"
+                rename[k] = _slug(stem, taken_regions)
+            names_new = list(raw.region_names)
+            for k, v in rename.items():
+                names_new[k] = v
+            new_surfs.append(TriSurface(raw.points, raw.faces, raw.regions, names_new))
+            for k, v in rename.items():
+                pretty = label if len(used) == 1 else f"{label} {raw.region_names[k]}"
+                new_comps.append(GeometryComponent(id=_slug(v, taken_ids), name=pretty, source_regions=[v], role=r))
+            labels.append(f.name)
+        merged = TriSurface.merge([current, *new_surfs])
+        rev = project.geometry_revision(cfg.geometry.revision_id)
+        report = inspect_surface(merged, units_assumed=rev.get("units") or "m")
+        rid = project.add_geometry_revision(merged, kind="added", parent_id=cfg.geometry.revision_id,
+                                            operations=(rev.get("operations") or []) + [{"op": "add_bodies", "files": labels, "units": units}],
+                                            report=report.as_dict(), label=f"{rev.get('label')} + {', '.join(labels)}", units=rev.get("units"),
+                                            source_filename=rev.get("source_filename"))
+
+        def mutate(c: ProjectConfig) -> None:
+            c.geometry.revision_id = rid
+            c.geometry.transform = frozen
+            c.geometry.components = list(c.geometry.components) + new_comps
+            c.reference.locked = False
+
+        project.update(mutate)
+        from .element import refresh_element_pose
+
+        refresh_element_pose(project)
+        derived = refresh_derived(project)
+        return {"kind": "parts", "revision_id": rid, "components": [c.model_dump(mode="json") for c in new_comps], "derived": derived}
+
+    # refinement bodies
+    from ..domain.mesh import RefinementRegion, RegionKind, SurfaceShape
+    from .mesh import plan_mesh
+
+    if level is None:
+        try:
+            plan, _, _ = plan_mesh(project)
+            near = [r for r in plan.regions if r.kind in ("wake_near", "vehicle_box")]
+            level = max((r.level for r in near), default=max((s.min_level for s in plan.surfaces), default=4) - 1)
+        except Exception:  # noqa: BLE001 - a default only
+            level = 4
+    taken = {r.id for r in cfg.mesh.regions}
+    regions, out = [], []
+    for f, raw, label in raws:
+        closed, _ = _closed_and_volume(raw)
+        if not closed:
+            raise AeroBenchError.make("geometry.refinement_open", ErrorCategory.GEOMETRY,
+                                      f"'{f.name}' is not a closed volume, so it has no inside to refine.",
+                                      action="Close the surface in your CAD tool (or Geometry, Repair, fill holes) and add it again.")
+        # stored in the source frame (like the parts), so later changes of units or axes move it with them
+        _, vol = _closed_and_volume(raw)
+        faces = raw.faces if vol >= 0 else raw.faces[:, ::-1].copy()  # outward: the mesher needs inside and outside right
+        body = TriSurface(raw.points, faces, np.zeros(len(faces), np.int32), ["refinement"])
+        sha = project.store_surface(body)
+        cfd = frozen.apply(body.points)
+        lo, hi = cfd.min(axis=0), cfd.max(axis=0)
+        rid = _slug(f"body_{label}", taken)
+        reg = RefinementRegion(id=rid, name=label, kind=RegionKind.USER, level=int(level), auto=False,
+                               shape=SurfaceShape(blob=sha, source_filename=f.name, bbox_min=tuple(lo.tolist()), bbox_max=tuple(hi.tolist()),
+                                                  volume=abs(vol) * tr.unit_scale ** 3, triangles=body.n_faces))
+        regions.append(reg)
+        out.append(reg.model_dump(mode="json"))
+
+    def mutate_r(c: ProjectConfig) -> None:
+        c.mesh.regions = list(c.mesh.regions) + regions
+
+    project.update(mutate_r)
+    return {"kind": "refinement", "regions": out}
 
 
 def identify_and_derive(project: Project, identify: bool = True) -> dict[str, Any]:
@@ -201,13 +347,15 @@ def refresh_derived(project: Project, resolution: int = 1000) -> dict[str, Any]:
 def set_units(project: Project, unit: str) -> dict[str, Any]:
     if unit not in UNIT_CANDIDATES:
         raise AeroBenchError.make("geometry.units_unknown", ErrorCategory.GEOMETRY, f"Unknown unit '{unit}'.")
-    project.update(lambda c: setattr(c.geometry, "transform", c.geometry.transform.model_copy(update={"unit_scale": UNIT_CANDIDATES[unit]})))
+    project.update(lambda c: setattr(c.geometry, "transform", c.geometry.transform.model_copy(update={"unit_scale": UNIT_CANDIDATES[unit],
+                                                                                                    "auto_place": True})))
     return identify_and_derive(project, identify=True)
 
 
 def set_orientation(project: Project, forward_axis: str, up_axis: str) -> dict[str, Any]:
     def mutate(c: ProjectConfig) -> None:
-        c.geometry.transform = c.geometry.transform.model_copy(update={"forward_axis": AxisDir(forward_axis), "up_axis": AxisDir(up_axis)})
+        c.geometry.transform = c.geometry.transform.model_copy(update={"forward_axis": AxisDir(forward_axis), "up_axis": AxisDir(up_axis),
+                                                                       "auto_place": True})
 
     project.update(mutate)
     return identify_and_derive(project, identify=True)
@@ -251,11 +399,19 @@ def set_components(project: Project, components: list[dict], wheels: Optional[li
     return out
 
 
-def preview_payload(project: Project, max_faces: int = 400_000, cfg: Optional[ProjectConfig] = None) -> tuple[dict, bytes]:
-    """Decimated, posed CFD-frame geometry for the 3D viewport (binary .abg-style payload)."""
+def preview_payload(project: Project, max_faces: int = 400_000, cfg: Optional[ProjectConfig] = None, posed: bool = True) -> tuple[dict, bytes]:
+    """Decimated CFD-frame geometry for the 3D viewport (binary .abg-style payload): posed as in
+    the tunnel, or (``posed=False``) as imported, the frame shape zones and parameters use."""
     cfg = cfg or project.config
     cfd = project.cfd_surface(cfg=cfg)
-    parts, z0, _ = posed_components(cfd, cfg.geometry.components, cfg.vehicle, cfg.tunnel.contact_patch_fraction) if cfg.geometry.components else ({"all": cfd}, 0.0, {})
+    if not cfg.geometry.components:
+        parts, z0 = {"all": cfd}, 0.0
+    elif posed:
+        parts, z0, _ = posed_components(cfd, cfg.geometry.components, cfg.vehicle, cfg.tunnel.contact_patch_fraction)
+    else:
+        from .zones import _display_parts
+
+        parts, z0 = _display_parts(cfd, cfg, posed=False)
     surfs = []
     names = []
     for cid, s in parts.items():

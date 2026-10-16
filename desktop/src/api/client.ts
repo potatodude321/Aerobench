@@ -155,6 +155,12 @@ export const api = {
     for (const [k, v] of Object.entries(fields)) fd.append(k, v);
     return ordered(path, async () => handle<T>(await fetch(engineUrl(path), { method: "POST", headers: headers(), body: fd })));
   },
+  uploadMany<T = any>(path: string, files: File[], fields: Record<string, string> = {}): Promise<T> {
+    const fd = new FormData();
+    for (const f of files) fd.append("files", f);
+    for (const [k, v] of Object.entries(fields)) fd.append(k, v);
+    return ordered(path, async () => handle<T>(await fetch(engineUrl(path), { method: "POST", headers: headers(), body: fd })));
+  },
   imageUrl(path: string): string {
     // <img> cannot send headers: pass the token as a query parameter (localhost only)
     const sep = path.includes("?") ? "&" : "?";

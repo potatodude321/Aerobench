@@ -50,6 +50,58 @@ async def upload_geometry(pid: str, file: UploadFile = File(...), units: str = F
             return geo.import_geometry(p, tmp, units)
 
 
+class BodiesBody(BaseModel):
+    paths: list[str]
+    kind: str = "parts"  # "parts" (walls with forces) or "refinement" (closed volumes the mesh is refined in)
+    units: str = "same"
+    role: str = "other"
+    level: Optional[int] = None
+    names: Optional[list[str]] = None
+
+
+@router.post("/bodies")
+def add_bodies(pid: str, body: BodiesBody, e: EngineState = Depends(engine)):
+    """Add bodies from the same source as the imported geometry (same units, axes and placement)."""
+    p = e.projects.get(pid)
+    with e.projects.lock(pid):
+        return geo.add_bodies(p, [Path(x) for x in body.paths], body.kind, body.units, body.role, body.level, body.names)
+
+
+@router.post("/bodies/upload")
+async def upload_bodies(pid: str, files: list[UploadFile] = File(...), kind: str = Form("parts"), units: str = Form("same"),
+                        role: str = Form("other"), level: Optional[int] = Form(None), e: EngineState = Depends(engine)):
+    p = e.projects.get(pid)
+    with tempfile.TemporaryDirectory() as td:
+        paths = []
+        for i, f in enumerate(files):
+            tmp = Path(td) / str(i) / (Path(f.filename or f"body{i}.stl").name or f"body{i}.stl")
+            tmp.parent.mkdir()
+            with open(tmp, "wb") as fh:
+                shutil.copyfileobj(f.file, fh)
+            paths.append(tmp)
+        with e.projects.lock(pid):
+            return geo.add_bodies(p, paths, kind, units, role, level)
+
+
+@router.get("/refinement/{region_id}.abg")
+def refinement_body(pid: str, region_id: str, e: EngineState = Depends(engine)):
+    """A modelled refinement body as the mesher places it (for drawing it over the parts)."""
+    import numpy as np
+
+    from ..services.mesh import refinement_bodies
+    from ..viz.payload import encode_mesh
+
+    p = e.projects.get(pid)
+    bodies = refinement_bodies(p, p.config, enabled_only=False)
+    if region_id not in bodies:
+        from ..core.errors import AeroBenchError, ErrorCategory
+
+        raise AeroBenchError.make("mesh.unknown_region", ErrorCategory.CONFIGURATION, f"No modelled refinement body '{region_id}'.")
+    b = bodies[region_id]
+    header, blob = encode_mesh(b.points.astype(np.float32), b.faces.astype(np.uint32))
+    return Response(pack(header, blob), media_type="application/octet-stream")
+
+
 @router.get("")
 def geometry_state(pid: str, e: EngineState = Depends(engine)):
     p = e.projects.get(pid)
@@ -143,9 +195,10 @@ def activate_revision(pid: str, body: RevisionBody, e: EngineState = Depends(eng
 
 
 @router.get("/preview.abg")
-def preview(pid: str, max_faces: int = 400000, e: EngineState = Depends(engine)):
+def preview(pid: str, max_faces: int = 400000, posed: bool = True, e: EngineState = Depends(engine)):
+    """posed=false: the parts as imported (the frame shape zones and parameters are defined in)."""
     p = e.projects.get(pid)
-    header, blob = geo.preview_payload(p, max_faces=max_faces)
+    header, blob = geo.preview_payload(p, max_faces=max_faces, posed=posed)
     return Response(pack(header, blob), media_type="application/octet-stream")
 
 

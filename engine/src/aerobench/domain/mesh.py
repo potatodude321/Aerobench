@@ -50,7 +50,22 @@ class SphereShape(Model):
     radius: float = Field(gt=0)
 
 
-Shape = Union[BoxShape, RotatedBoxShape, CylinderShape, SphereShape]
+class SurfaceShape(Model):
+    """A closed surface you modelled yourself (imported with the parts, same source frame):
+    refines everything inside it. Stored in the project (``blob``) in the source frame of the
+    parts, so it follows their units, axes and placement, and is posed with the body when the
+    case is written. ``bbox_*`` (CFD frame) and ``volume`` (m³) are for planning and display."""
+
+    kind: Literal["surface"] = "surface"
+    blob: str = Field(description="sha256 of the stored surface (source frame of the parts)")
+    source_filename: str = ""
+    bbox_min: Vec3
+    bbox_max: Vec3
+    volume: float = Field(ge=0)
+    triangles: int = 0
+
+
+Shape = Union[BoxShape, RotatedBoxShape, CylinderShape, SphereShape, SurfaceShape]
 
 
 class RegionKind(str, Enum):

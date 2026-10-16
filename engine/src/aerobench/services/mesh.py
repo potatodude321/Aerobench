@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+import numpy as np
+
 from ..core.errors import AeroBenchError, Diagnostic, ErrorCategory, Severity, raise_if_errors
 from ..core.fs import sha256_tree
 from ..core.ids import short_id, utc_now_iso
@@ -12,7 +14,10 @@ from ..core.fs import sha256_json
 from ..foam.adapters import get_adapter
 from ..foam.case.builder import ResolvedCase, assert_no_dynamic_code, build_mesh_case, resolve_case
 from ..foam.logs.mesh_logs import parse_checkmesh, parse_snappy
-from ..geometry.pose import write_case_surfaces
+from ..domain.mesh import SurfaceShape
+from ..geometry.io import write_stl
+from ..geometry.pose import body_pose, place_in_cfd_frame, write_case_surfaces
+from ..geometry.trisurface import TriSurface
 from ..jobs.manager import JobManager
 from ..jobs.spec import FoamStep, JobStatus, RemoveStep, StageStep
 from ..meshing.plan import MeshPlan, resolve_mesh_plan
@@ -29,9 +34,42 @@ def mesh_hash(cfg: ProjectConfig) -> str:
     return sha256_json(mesh_stage_input(cfg))
 
 
+def refinement_bodies(project: Project, cfg: ProjectConfig, enabled_only: bool = True) -> dict[str, TriSurface]:
+    """The modelled refinement bodies as the mesher sees them: placed like the parts (units,
+    axes, placement) and posed with the body (region id -> surface)."""
+    surf = [r for r in cfg.mesh.regions if isinstance(r.shape, SurfaceShape) and (r.enabled or not enabled_only)]
+    if not surf:
+        return {}
+    _, placed = place_in_cfd_frame(project.raw_surface(cfg.geometry.revision_id), cfg.geometry.transform)
+    m = body_pose(project.cfd_surface(cfg=cfg), cfg.vehicle, cfg.tunnel.contact_patch_fraction)
+    out = {}
+    for r in surf:
+        raw = project.load_surface(r.shape.blob)  # type: ignore[union-attr]
+        faces = raw.faces if np.linalg.det(placed.rotation()) > 0 else raw.faces[:, ::-1]
+        out[r.id] = TriSurface(placed.apply(raw.points), faces, raw.regions, list(raw.region_names)).transformed(m)
+    return out
+
+
+def _posed_surface_regions(project: Project, cfg: ProjectConfig) -> ProjectConfig:
+    """``cfg`` with each modelled refinement body's box where the posed body puts it."""
+    bodies = refinement_bodies(project, cfg, enabled_only=False)
+    if not bodies:
+        return cfg
+    out = cfg.model_copy(deep=True)
+    regions = []
+    for r in out.mesh.regions:
+        if r.id in bodies:
+            lo, hi = bodies[r.id].bbox()
+            r = r.model_copy(update={"shape": r.shape.model_copy(update={"bbox_min": tuple(lo.tolist()), "bbox_max": tuple(hi.tolist())})})
+        regions.append(r)
+    out.mesh.regions = regions
+    return out
+
+
 def plan_mesh(project: Project, cfg: Optional[ProjectConfig] = None) -> tuple[MeshPlan, ResolvedCase, dict[str, Any]]:
     cfg = cfg or project.config
     ext = vehicle_extent(project, cfg)
+    cfg = _posed_surface_regions(project, cfg)
     frontal = cfg.reference.area_computed or cfg.reference.area
     sb = cfg.geometry.sizing_box
     if sb is not None:
@@ -91,6 +129,8 @@ def prepare_mesh(project: Project, ctx: AppContext, cfg: Optional[ProjectConfig]
     (mdir / "constant" / "triSurface").mkdir(parents=True)
     cfd = project.cfd_surface(cfg=cfg)
     cs = write_case_surfaces(cfd, cfg.geometry.components, cfg.vehicle, cfg.tunnel.contact_patch_fraction, mdir / "constant" / "triSurface")
+    for rid, body in refinement_bodies(project, cfg).items():
+        write_stl(mdir / "constant" / "triSurface" / f"ref_{rid}.stl", body, binary=True, solid_name=f"ref_{rid}")
     plan, rc, ext = plan_mesh(project, cfg)
     gc = build_mesh_case(cfg, rc, adapter)
     assert_no_dynamic_code(gc)

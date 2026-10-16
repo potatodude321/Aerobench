@@ -10,6 +10,7 @@ export interface DesktopBridge {
   getEngine(): Promise<{ url: string; token: string; pid: number } | null>;
   engineLog(): Promise<string[]>;
   openFile(opts?: { title?: string; filters?: FileFilter[] }): Promise<string | null>;
+  openFiles(opts?: { title?: string; filters?: FileFilter[] }): Promise<string[]>;
   openDirectory(opts?: { title?: string; create?: boolean }): Promise<string | null>;
   saveFile(opts?: { title?: string; defaultPath?: string; filters?: FileFilter[] }): Promise<string | null>;
   openPath(p: string): Promise<string>;

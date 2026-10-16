@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { bridge, isDesktop } from "../api/bridge";
 import { api } from "../api/client";
 import type { GeometryComponent, Wheel } from "../api/types";
+import { AddBodies } from "../components/AddBodies";
 import { fmt } from "../components/ColorLegend";
 import { notifyError, notifyInfo, notifyOk } from "../components/notify";
 import { DiagnosticList, Hint, KeyValue, NumField, PageLayout, SectionTitle, StatusDot } from "../components/ui";
@@ -262,6 +263,7 @@ export function GeometryPage() {
           )}
         </FileButton>
       )}
+      {rev && <AddBodies unit={unit} onAdded={async () => { await refreshProject(); await load(); bumpGeometry(); }} />}
       <Hint>STL (binary or ASCII with several solids), OBJ, PLY, STEP and IGES. Parts named in the file (body, wheels, wings…) are kept apart.</Hint>
     </Stack>
   );

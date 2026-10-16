@@ -169,6 +169,10 @@ function registerIpc(): void {
     const r = await dialog.showOpenDialog(win!, { title: opts?.title, properties: ["openFile"], filters: opts?.filters });
     return r.canceled ? null : r.filePaths[0];
   });
+  ipcMain.handle("dialog:openFiles", async (_e, opts: { title?: string; filters?: Electron.FileFilter[] }) => {
+    const r = await dialog.showOpenDialog(win!, { title: opts?.title, properties: ["openFile", "multiSelections"], filters: opts?.filters });
+    return r.canceled ? [] : r.filePaths;
+  });
   ipcMain.handle("dialog:openDirectory", async (_e, opts: { title?: string; create?: boolean }) => {
     const props: ("openDirectory" | "createDirectory" | "promptToCreate")[] = ["openDirectory"];
     if (opts?.create) props.push("createDirectory", "promptToCreate");

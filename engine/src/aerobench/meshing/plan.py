@@ -25,6 +25,7 @@ from ..domain.mesh import (
     RegionKind,
     RotatedBoxShape,
     SphereShape,
+    SurfaceShape,
 )
 from ..domain.project import ProjectConfig, effective_yaw_range
 from ..domain.setup import Symmetry
@@ -106,7 +107,82 @@ def _shape_volume(shape) -> float:
         return math.pi * shape.radius**2 * float(np.linalg.norm(np.subtract(shape.point2, shape.point1)))
     if isinstance(shape, SphereShape):
         return 4.0 / 3.0 * math.pi * shape.radius**3
+    if isinstance(shape, SurfaceShape):
+        return float(shape.volume)
     return 0.0
+
+
+def _shape_bounds(shape: dict) -> tuple[np.ndarray, np.ndarray]:
+    k = shape["kind"]
+    if k == "box":
+        return np.asarray(shape["min"], float), np.asarray(shape["max"], float)
+    if k == "surface":
+        return np.asarray(shape["bbox_min"], float), np.asarray(shape["bbox_max"], float)
+    if k == "sphere":
+        c, r = np.asarray(shape["centre"], float), float(shape["radius"])
+        return c - r, c + r
+    if k == "cylinder":
+        p1, p2, r = np.asarray(shape["point1"], float), np.asarray(shape["point2"], float), float(shape["radius"])
+        return np.minimum(p1, p2) - r, np.maximum(p1, p2) + r
+    if k == "rotated_box":
+        o, sp = np.asarray(shape["origin"], float), np.asarray(shape["span"], float)
+        e1 = np.asarray(shape["e1"], float) / np.linalg.norm(shape["e1"])
+        e3 = np.asarray(shape["e3"], float) / np.linalg.norm(shape["e3"])
+        e2 = np.cross(e3, e1)
+        corners = np.array([o + a * sp[0] * e1 + b * sp[1] * e2 + c * sp[2] * e3 for a in (0, 1) for b in (0, 1) for c in (0, 1)])
+        return corners.min(0), corners.max(0)
+    raise ValueError(k)
+
+
+def _inside(shape: dict, p: np.ndarray) -> np.ndarray:
+    k = shape["kind"]
+    if k in ("box", "surface"):  # a modelled volume counts by its bounding box here
+        lo, hi = _shape_bounds(shape)
+        return np.all((p >= lo) & (p <= hi), axis=1)
+    if k == "sphere":
+        return np.linalg.norm(p - np.asarray(shape["centre"], float), axis=1) <= float(shape["radius"])
+    if k == "cylinder":
+        a, b = np.asarray(shape["point1"], float), np.asarray(shape["point2"], float)
+        ab = b - a
+        t = (p - a) @ ab / max(float(ab @ ab), 1e-300)
+        d = np.linalg.norm(p - a - np.outer(t, ab), axis=1)
+        return (t >= 0) & (t <= 1) & (d <= float(shape["radius"]))
+    if k == "rotated_box":
+        o, sp = np.asarray(shape["origin"], float), np.asarray(shape["span"], float)
+        e1 = np.asarray(shape["e1"], float) / np.linalg.norm(shape["e1"])
+        e3 = np.asarray(shape["e3"], float) / np.linalg.norm(shape["e3"])
+        e2 = np.cross(e3, e1)
+        q = p - o
+        u = np.stack([q @ e1, q @ e2, q @ e3], axis=1)
+        return np.all((u >= 0) & (u <= sp), axis=1)
+    return np.zeros(len(p), dtype=bool)
+
+
+def exclusive_volumes(regions: list["RegionPlan"], n: int = 24) -> list[float]:
+    """Volume of each refinement region that is not inside a finer one (or an equally fine one
+    listed before it): where regions overlap, the mesher refines to the finest level, so the
+    cells there are counted once. Sampled on a grid over each region's own bounds."""
+    out = []
+    shapes = [r.shape for r in regions]
+    for i, r in enumerate(regions):
+        try:
+            lo, hi = _shape_bounds(shapes[i])
+        except (KeyError, ValueError):
+            out.append(r.volume)
+            continue
+        g = [(lo[a] + (np.arange(n) + 0.5) / n * (hi[a] - lo[a])) for a in range(3)]
+        pts = np.stack(np.meshgrid(*g, indexing="ij"), axis=-1).reshape(-1, 3)
+        own = _inside(shapes[i], pts)
+        if not own.any():
+            out.append(0.0 if r.volume == 0 else r.volume)
+            continue
+        covered = np.zeros(len(pts), dtype=bool)
+        for j, o in enumerate(regions):
+            if j == i or not (o.level > r.level or (o.level == r.level and j < i)):
+                continue
+            covered |= _inside(shapes[j], pts)
+        out.append(r.volume * float((own & ~covered).sum()) / float(own.sum()))
+    return out
 
 
 def automotive_regions(
@@ -294,8 +370,10 @@ def resolve_mesh_plan(
     # -------------------------------------------------------- estimate
     domain_vol = (x_max - x_min) * (y_max - y_min) * (z_max - z_min)
     est = domain_vol / base**3
-    for r in region_plans:
-        est += r.volume / r.cell_size**3 * 0.875
+    # refinement volumes: each point counts once, at the finest level of the volumes it lies in
+    # (overlapping and nested boxes are not counted twice)
+    for r, vol in zip(region_plans, exclusive_volumes(region_plans)):
+        est += vol / r.cell_size**3 * 0.875
     areas = component_areas or {}
     for sp in surfaces:
         A = areas.get(sp.component_id)

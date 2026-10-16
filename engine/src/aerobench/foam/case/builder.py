@@ -12,7 +12,7 @@ from ...aero.flow import InletTurbulenceValues, inlet_turbulence
 from ...aero.forces import freestream_direction
 from ...core.errors import AeroBenchError, ErrorCategory
 from ...domain.geometry import ComponentRole, GeometryComponent
-from ...domain.mesh import BoxShape, CylinderShape, RotatedBoxShape, SphereShape
+from ...domain.mesh import BoxShape, CylinderShape, RotatedBoxShape, SphereShape, SurfaceShape
 from ...domain.project import ProjectConfig
 from ...domain.setup import FarfieldBC, GroundMode, InletTurbulenceSpec, Symmetry, WallTreatment, YawGroundMode
 from ...domain.vehicle import WheelRotation
@@ -232,12 +232,15 @@ def _shape_geometry(shape) -> Dict:
         return Dict(type="cylinder", point1=vec(shape.point1), point2=vec(shape.point2), radius=clean(shape.radius))
     if isinstance(shape, SphereShape):
         return Dict(type="sphere", centre=vec(shape.centre), radius=clean(shape.radius))
+    if isinstance(shape, SurfaceShape):
+        raise TypeError("surface regions are written as triSurfaceMesh entries")
     raise TypeError(type(shape))
 
 
 def _shape_from_json(js: dict):
     kind = js["kind"]
-    return {"box": BoxShape, "rotated_box": RotatedBoxShape, "cylinder": CylinderShape, "sphere": SphereShape}[kind](**js)
+    return {"box": BoxShape, "rotated_box": RotatedBoxShape, "cylinder": CylinderShape, "sphere": SphereShape,
+            "surface": SurfaceShape}[kind](**js)
 
 
 def _component_groups(c: GeometryComponent) -> list[str]:
@@ -262,7 +265,10 @@ def _snappy(cfg: ProjectConfig, rc: ResolvedCase) -> Dict:
     for c in rc.components:
         geom[f"{c.id}.stl"] = Dict(type="triSurfaceMesh", name=c.id)
     for r in plan.regions:
-        geom[f"ref_{r.id}"] = _shape_geometry(_shape_from_json(r.shape))
+        if r.shape.get("kind") == "surface":  # a modelled refinement body: constant/triSurface/ref_<id>.stl
+            geom[f"ref_{r.id}.stl"] = Dict(type="triSurfaceMesh", name=f"ref_{r.id}")
+        else:
+            geom[f"ref_{r.id}"] = _shape_geometry(_shape_from_json(r.shape))
     d["geometry"] = geom
 
     cast = Dict()

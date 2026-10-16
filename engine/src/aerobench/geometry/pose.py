@@ -79,6 +79,14 @@ def pose_matrix(vehicle: VehicleConfig, pivot: np.ndarray) -> np.ndarray:
     return m
 
 
+def body_pose(surf_cfd: TriSurface, vehicle: VehicleConfig, contact_fraction: float) -> np.ndarray:
+    """The 4x4 transform posing body-attached parts (identity when there is no rake or lift)."""
+    if vehicle.rake_deg == 0 and vehicle.ride_height_offset == 0:
+        return np.eye(4)
+    z0, _ = ground_z(vehicle, surf_cfd, contact_fraction)
+    return pose_matrix(vehicle, _rake_pivot(vehicle, surf_cfd, z0))
+
+
 @dataclass
 class CaseSurfaces:
     files: dict[str, Path]  # component id -> stl path

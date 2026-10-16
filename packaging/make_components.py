@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -48,7 +49,13 @@ def nsis_str(s: str) -> str:
 
 def build(args: argparse.Namespace) -> int:
     b = Path(args.build).resolve()
-    bundle_info = json.loads((b / "bundle" / "bundle.json").read_text(encoding="utf-8"))
+    manifest = b / "bundle" / "bundle.json"
+    bundle_info = json.loads(manifest.read_text(encoding="utf-8"))
+    # the third-party bundle is prepared once; the manifest still names the version shipping it
+    version = re.search(r'APP_VERSION\s*=\s*"([^"]+)"', (ROOT / "engine" / "src" / "aerobench" / "version.py").read_text(encoding="utf-8"))
+    if version and bundle_info.get("app_version") != version.group(1):
+        bundle_info["app_version"] = version.group(1)
+        manifest.write_text(json.dumps(bundle_info, indent=2), encoding="utf-8")
     comps = bundle_info["components"]
     links = json.loads((b / "bundle" / "tools" / "paraview-links.json").read_text(encoding="utf-8"))
     pv_dir = Path(comps["paraview"]["path"]).name

@@ -353,6 +353,21 @@ export class Viewer {
     this.dirty = true;
   }
 
+  /** A surface drawn as an overlay (a modelled refinement body): translucent faces and its outline edges. */
+  addMeshOverlay(abg: Abg, color = 0x8db7e0, opacity = 0.08, name = "mesh"): void {
+    if (!abg.indices) return;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(abg.positions, 3));
+    g.setIndex(new THREE.BufferAttribute(abg.indices, 1));
+    const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide }));
+    m.name = name;
+    this.overlays.add(m);
+    const e = new THREE.LineSegments(new THREE.EdgesGeometry(g, 30), new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.8 }));
+    e.name = `${name}-edges`;
+    this.overlays.add(e);
+    this.dirty = true;
+  }
+
   addRotatedBox(origin: number[], span: number[], e1: number[], e3: number[], color = 0x8db7e0, opacity = 0.08): void {
     const x = new THREE.Vector3(...(e1 as [number, number, number])).normalize();
     const z = new THREE.Vector3(...(e3 as [number, number, number])).normalize();

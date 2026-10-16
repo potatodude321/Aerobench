@@ -14,6 +14,7 @@ import { notifyError, notifyOk } from "../../components/notify";
 import { DiagnosticCard, Hint, KeyValue, NumField, PageLayout, SectionTitle } from "../../components/ui";
 import { pid, useApp } from "../../state/store";
 import { Abg, decodeAbg } from "../../viewport/abg";
+import { BoxEditor } from "../../viewport/BoxEditor";
 import { setReserveColormap } from "../../viewport/colormaps";
 import { Viewer } from "../../viewport/Viewer";
 import { Viewport3D } from "../../viewport/Viewport3D";
@@ -74,6 +75,9 @@ export function StructurePage() {
   /** a check started from this page: show its reserve factors as soon as it is done */
   const awaiting = useRef<string | null>(null);
   const viewer = useRef<Viewer | null>(null);
+  const boxEditor = useRef<BoxEditor | null>(null);
+  const [supportSel, setSupportSel] = useState(0);
+  const [liveSupport, setLiveSupport] = useState<{ id: string; min: Vec3; max: Vec3 } | null>(null);
   const abgRef = useRef<Abg | null>(null);
   const framed = useRef(false);
   const seq = useRef(0);
@@ -247,19 +251,38 @@ export function StructurePage() {
     v.morphResult(LAYER, deform * exaggeration, false);
   }, [deform, exaggeration, shown, view]);
 
-  // supports drawn as boxes on top of whatever is shown
+  // supports drawn as boxes on top of whatever is shown; the selected one has handles to drag
+  const supportBox = (s: StructSupport): [Vec3, Vec3] => (liveSupport && liveSupport.id === s.id ? [liveSupport.min, liveSupport.max]
+    : [s.shape.min as Vec3, s.shape.max as Vec3]);
   useEffect(() => {
     const v = viewer.current;
     if (!v || !st) return;
     v.clearOverlays();
+    if (!boxEditor.current || boxEditor.current.v !== v) {
+      boxEditor.current?.dispose();
+      boxEditor.current = new BoxEditor(v);
+    }
+    const ed = boxEditor.current;
+    ed.onSelect = (id) => {
+      const i = st.supports.findIndex((s) => s.id === id);
+      if (i >= 0) setSupportSel(i);
+    };
+    ed.onChange = (id, min, max) => setLiveSupport({ id, min: min as Vec3, max: max as Vec3 });
+    ed.onCommit = (id, min, max) => {
+      setLiveSupport(null);
+      save({ ...st, supports: st.supports.map((s) => (s.id === id ? { ...s, shape: { ...s.shape, min: min as Vec3, max: max as Vec3 } } : s)) });
+    };
+    const boxes = [];
     for (const s of st.supports) {
       if (!s.enabled || s.shape.kind !== "box") continue;
-      const mn = s.shape.min as Vec3;
-      const mx = s.shape.max as Vec3;
-      v.addBox(mn, mx, SUPPORT_COLOR, 0.12, true, `support-${s.id}`);
+      const [mn, mx] = supportBox(s);
+      boxes.push({ id: s.id, min: mn, max: mx, color: SUPPORT_COLOR });
       v.addLabel(s.name, [(mn[0] + mx[0]) / 2, (mn[1] + mx[1]) / 2, mn[2] - 0.03], SUPPORT_COLOR, 0.05);
     }
-  }, [st?.supports, hasViewer, shown]);
+    ed.setBoxes(boxes, st.supports[supportSel]?.id ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [st?.supports, hasViewer, shown, liveSupport, supportSel]);
+  useEffect(() => () => boxEditor.current?.dispose(), []);
 
   // ---------------------------------------------------------------- actions
   const setUpStart = async () => {
@@ -412,7 +435,8 @@ export function StructurePage() {
 
       <SectionTitle>Supports</SectionTitle>
       <SupportsEditor supports={st.supports} presets={presets?.supports ?? []} counts={counts} bounds={null}
-        onChange={(sp) => save({ ...st, supports: sp })} />
+        onChange={(sp) => { setLiveSupport(null); save({ ...st, supports: sp }); }} selected={supportSel} onSelect={setSupportSel}
+        onLive={(id, min, max) => setLiveSupport({ id, min, max })} />
 
       <SectionTitle>Pass criterion</SectionTitle>
       <SimpleGrid cols={2} spacing="xs">

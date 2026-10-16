@@ -9,14 +9,29 @@ import { formatDuration, LogDrawer } from "../components/LiveLog";
 import { notifyError, notifyOk } from "../components/notify";
 import { DiagnosticList, Hint, KeyValue, NumField, PageLayout, SectionTitle, StatusBadge, StatusDot } from "../components/ui";
 import { pid, useApp } from "../state/store";
-import { decodeAbg } from "../viewport/abg";
+import { decodeAbg, type Abg } from "../viewport/abg";
 import { LEVEL_COLORS, levelColorCss } from "../viewport/colormaps";
 import { Viewer } from "../viewport/Viewer";
 import { Viewport3D } from "../viewport/Viewport3D";
+import { RegionEditor } from "./mesh/RegionEditor";
 import { usePlan } from "./TunnelPage";
+
+/** Modelled refinement bodies as the mesher places them (fetched once per placement). */
+const bodyCache = new Map<string, Promise<Abg>>();
+function refinementBody(id: string, shape: any): Promise<Abg> {
+  const key = `${pid()}:${id}:${shape.blob}:${shape.bbox_min.join(",")}:${shape.bbox_max.join(",")}`;
+  let p = bodyCache.get(key);
+  if (!p) {
+    p = api.binary(`/api/p/${pid()}/geometry/refinement/${id}.abg`).then(decodeAbg);
+    p.catch(() => bodyCache.delete(key));
+    bodyCache.set(key, p);
+  }
+  return p;
+}
 
 export function drawPlan(v: Viewer, plan: MeshPlan, opts: { regions?: boolean; domain?: boolean; hiddenRegions?: string[] } = {}) {
   v.clearOverlays();
+  const gen = ((v as any).__planGen = ((v as any).__planGen || 0) + 1);
   const [x0, y0, z0] = plan.domain_min;
   const [x1, y1, z1] = plan.domain_max;
   if (opts.domain !== false) {
@@ -33,6 +48,11 @@ export function drawPlan(v: Viewer, plan: MeshPlan, opts: { regions?: boolean; d
       if (s.kind === "box") v.addBox(s.min, s.max, col, 0.05, true, r.id);
       else if (s.kind === "cylinder") v.addCylinder(s.point1, s.point2, s.radius, col, 0.1);
       else if (s.kind === "rotated_box") v.addRotatedBox(s.origin, s.span, s.e1, s.e3, col, 0.05);
+      else if (s.kind === "surface") {
+        refinementBody(r.id, s).then((abg) => {
+          if ((v as any).__planGen === gen) v.addMeshOverlay(abg, col, 0.06, r.id);
+        }).catch(() => v.addBox(s.bbox_min, s.bbox_max, col, 0.0, true, r.id));
+      }
     }
     v.addPoint(plan.location_in_mesh, 0xd6a24a, Math.max(0.03, plan.base_cell * 0.15));
   }
@@ -93,6 +113,8 @@ export function MeshPage() {
   const cores = Math.max(1, Math.min(maxCores, cfg.execution.n_procs));
   const viewer = useRef<Viewer | null>(null);
   const [geomLoaded, setGeomLoaded] = useState(0);
+  const [viewerReady, setViewerReady] = useState(0);
+  const framedFor = useRef<string>("");
   // view settings live in the store, so they survive leaving and re-opening the page
   const mode: "plan" | "mesh" = meshView.mode ?? "plan";
   const setMode = (v: "plan" | "mesh") => setMeshView({ mode: v, modeChosen: true });
@@ -191,11 +213,18 @@ export function MeshPage() {
     v.clearMeshLayers();
     v.setSectionClip(null);
     v.setGeometryVisible(true);
-    drawPlan(v, plan, { regions: true, domain: true, hiddenRegions: hidden });
+    // your own boxes are drawn (and edited) by the region editor
+    const own = plan.regions.filter((r) => !r.auto && r.shape.kind === "box").map((r) => r.id);
+    drawPlan(v, plan, { regions: true, domain: true, hiddenRegions: [...hidden, ...own] });
     const lo = plan.vehicle_bbox_min;
     const hi = plan.vehicle_bbox_max;
-    const L = hi[0] - lo[0];
-    v.view("iso", new THREE.Box3(new THREE.Vector3(lo[0] - 0.3 * L, lo[1] - 0.5 * L, lo[2]), new THREE.Vector3(hi[0] + 1.5 * L, hi[1] + 0.5 * L, hi[2] + 0.3 * L)));
+    const key = `${lo.join(",")}|${hi.join(",")}|${geomLoaded}`;
+    if (framedFor.current !== key) {
+      // frame the view when the vehicle changes, not when a box is edited
+      framedFor.current = key;
+      const L = hi[0] - lo[0];
+      v.view("iso", new THREE.Box3(new THREE.Vector3(lo[0] - 0.3 * L, lo[1] - 0.5 * L, lo[2]), new THREE.Vector3(hi[0] + 1.5 * L, hi[1] + 0.5 * L, hi[2] + 0.3 * L)));
+    }
   }, [plan, hidden, geomLoaded, mode]);
 
   // ---------------------------------------------------------------- generated mesh view
@@ -393,14 +422,6 @@ export function MeshPage() {
     patchConfig({ mesh: { preset: "custom", base_cell_size: plan.base_cell, surface } });
   };
 
-  const setRegionLevel = (id: string, level: number | null, enabled?: boolean) => {
-    if (!plan) return;
-    const r = plan.regions.find((x) => x.id === id)!;
-    const existing = (m.regions || []).filter((x: any) => x.id !== id);
-    const entry = { id, name: r.name, kind: r.kind, shape: r.shape, level: level ?? r.level, enabled: enabled ?? true, auto: r.auto };
-    patchConfig({ mesh: { regions: [...existing, entry] } });
-  };
-
   const generate = async (force = false) => {
     setBusy(true);
     try {
@@ -557,32 +578,8 @@ export function MeshPage() {
         </Table.Tbody>
       </Table>
 
-      <SectionTitle>Refinement boxes</SectionTitle>
-      <Table className="compact" withRowBorders={false}>
-        <Table.Tbody>
-          {plan?.regions.map((r) => (
-            <Table.Tr key={r.id}>
-              <Table.Td w={28}>
-                <Tooltip label="Show in the planning view">
-                  <Checkbox size="xs" checked={!hidden.includes(r.id)} onChange={(e) => setHidden((h) => (e.currentTarget.checked ? h.filter((x) => x !== r.id) : [...h, r.id]))} />
-                </Tooltip>
-              </Table.Td>
-              <Table.Td>
-                <Group gap={6} wrap="nowrap">
-                  <span style={{ width: 8, height: 8, borderRadius: 2, background: levelColorCss(r.level), flexShrink: 0 }} />
-                  <Text size="xs">{r.name}</Text>
-                </Group>
-              </Table.Td>
-              <Table.Td>
-                <NumberInput size="xs" w={58} min={0} max={12} value={r.level} onChange={(v) => typeof v === "number" && setRegionLevel(r.id, v)} />
-              </Table.Td>
-              <Table.Td>
-                <Text size="xs">{fmt(r.cell_size * 1000, 0)} mm</Text>
-              </Table.Td>
-            </Table.Tr>
-          ))}
-        </Table.Tbody>
-      </Table>
+      <RegionEditor plan={plan} regions={m.regions || []} patch={(regions) => patchConfig({ mesh: { regions } })} viewer={viewer}
+        viewerReady={viewerReady} active={mode === "plan"} hidden={hidden} setHidden={setHidden} centreY={cfg.vehicle.centreline_y || 0} />
       {plan && plan.distance_levels.length > 0 && (
         <Hint style={{ marginTop: 6 }}>Also near the walls: {plan.distance_levels.map(([d, l]) => `level ${l} within ${fmt(d * 1000, 0)} mm`).join(", ")}.</Hint>
       )}
@@ -648,7 +645,7 @@ export function MeshPage() {
 
   return (
     <PageLayout side={side} title="Mesh" lede="Set how fine the mesh is near the vehicle and in its wake, then generate it and inspect the cells." footer={footer}>
-      <Viewport3D onReady={(v) => (viewer.current = v)}>
+      <Viewport3D onReady={(v) => { viewer.current = v; setViewerReady((x) => x + 1); }}>
         <div className="ab-float" style={{ left: 12, top: 12, padding: 10, width: 258 }}>
           <SegmentedControl size="xs" fullWidth value={mode} onChange={(v) => setMode(v as any)}
             data={[{ value: "plan", label: "Planned" }, { value: "mesh", label: "Generated mesh", disabled: !viewable }]} />

@@ -8,11 +8,14 @@ import { IconDeviceFloppy, IconFocus2, IconPlus, IconTrash, IconWand } from "@ta
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api/client";
 import { ColorLegend, fmt } from "../../components/ColorLegend";
+import { MirrorMenu } from "../../components/MirrorMenu";
 import { MorphControls, showMorph } from "../../components/MorphView";
 import { notifyError, notifyOk } from "../../components/notify";
+import { ScrubField } from "../../components/ScrubField";
 import { Hint, PageLayout, SectionTitle } from "../../components/ui";
 import { pid, useApp } from "../../state/store";
 import { decodeAbg } from "../../viewport/abg";
+import { BoxEditor } from "../../viewport/BoxEditor";
 import { Viewer } from "../../viewport/Viewer";
 import { Viewport3D } from "../../viewport/Viewport3D";
 import { Box3, Vector3 } from "three";
@@ -68,7 +71,10 @@ export function ZonesPanel({ onUse }: { onUse?: (paramIds: string[]) => void }) 
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
   const [hasViewer, setHasViewer] = useState(false);
+  const [coverage, setCoverage] = useState<Record<string, number>>({});
+  const element = project.config.application === "aero_element";
   const viewer = useRef<Viewer | null>(null);
+  const editor = useRef<BoxEditor | null>(null);
   const framed = useRef(false);
   const reqSeq = useRef(0);
 
@@ -113,6 +119,7 @@ export function ZonesPanel({ onUse }: { onUse?: (paramIds: string[]) => void }) 
     v.view(rear ? "iso_rear" : "iso", box);
   };
 
+  /** Boxes (editable: click one, drag its face handles) and their names. */
   const drawBoxes = () => {
     const v = viewer.current;
     if (!v) return;
@@ -120,9 +127,22 @@ export function ZonesPanel({ onUse }: { onUse?: (paramIds: string[]) => void }) 
     zones.forEach((x, i) => {
       if (!x.enabled) return;
       const c = ZONE_COLORS[i % ZONE_COLORS.length];
-      v.addBox(x.box_min, x.box_max, c, i === sel ? 0.1 : 0.03, true, `zone-${x.id}`);
       v.addLabel(x.name, [(x.box_min[0] + x.box_max[0]) / 2, (x.box_min[1] + x.box_max[1]) / 2, x.box_max[2] + 0.08], c, 0.32);
     });
+    const ed = editor.current;
+    if (!ed) return;
+    ed.onSelect = (id) => {
+      const i = zones.findIndex((x) => x.id === id);
+      if (i >= 0) setSel(i);
+    };
+    const move = (id: string, mn: number[], mx: number[]) => {
+      setZones((zs) => zs.map((x) => (x.id === id ? { ...x, box_min: mn, box_max: mx } : x)));
+      setDirty(true);
+    };
+    ed.onChange = move;
+    ed.onCommit = move;
+    ed.setBoxes(zones.flatMap((x, i) => (x.enabled ? [{ id: x.id, min: x.box_min, max: x.box_max, color: ZONE_COLORS[i % ZONE_COLORS.length],
+      symmetricY: x.symmetric ? yc : null }] : [])), zones[sel]?.id ?? null);
   };
 
   const loadFreedom = async () => {
@@ -134,7 +154,9 @@ export function ZonesPanel({ onUse }: { onUse?: (paramIds: string[]) => void }) 
       if (seq !== reqSeq.current) return;
       v.clearResults();
       v.setGeometry(null);
-      v.setResult("freedom", decodeAbg(buf), { colormap: "Shape freedom", range: [0, 100] });
+      const abg = decodeAbg(buf);
+      setCoverage(Object.fromEntries((abg.header.coverage || []).map((c: any) => [c.id, c.area_pct])));
+      v.setResult("freedom", abg, { colormap: "Shape freedom", range: [0, 100] });
       if (!framed.current) {
         v.view(rearFocused() ? "iso_rear" : "iso");
         framed.current = true;
@@ -176,12 +198,16 @@ export function ZonesPanel({ onUse }: { onUse?: (paramIds: string[]) => void }) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zones, mode, ready, hasViewer]);
   useEffect(drawBoxes, [sel]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => editor.current?.dispose(), []);
 
   const onViewer = (v: Viewer) => {
     viewer.current = v;
+    editor.current?.dispose();
+    editor.current = new BoxEditor(v);
     setHasViewer(true);
     // the surface first, so the view can be framed on it once the zones are known
-    api.binary(`/api/p/${pid()}/geometry/preview.abg`).then((buf) => {
+    // the parts as imported: zones are defined on the part itself, before it is posed in the tunnel
+    api.binary(`/api/p/${pid()}/geometry/preview.abg?posed=false`).then((buf) => {
       if (!v.resultIds().length) v.setGeometry(decodeAbg(buf), { colorByPart: false });
     }).catch(() => undefined);
   };
@@ -213,10 +239,43 @@ export function ZonesPanel({ onUse }: { onUse?: (paramIds: string[]) => void }) 
     }
   };
 
+  /** Zones whose boxes overlap (on the same parts): their changes add up there. */
+  const overlaps = useMemo(() => {
+    const out: Record<string, string[]> = {};
+    const on = zones.filter((x) => x.enabled);
+    for (const a of on) {
+      for (const b of on) {
+        if (a.id >= b.id) continue;
+        const shared = !a.components.length || !b.components.length || a.components.some((c) => b.components.includes(c));
+        const hit = [0, 1, 2].every((k) => Math.min(a.box_max[k], b.box_max[k]) > Math.max(a.box_min[k], b.box_min[k]));
+        if (shared && hit) {
+          (out[a.id] ||= []).push(b.name);
+          (out[b.id] ||= []).push(a.name);
+        }
+      }
+    }
+    return out;
+  }, [zones]);
+
+  const mirrorZone = (axis: number, plane: number) => {
+    if (!z) return;
+    const mn = [...z.box_min];
+    const mx = [...z.box_max];
+    mn[axis] = 2 * plane - z.box_max[axis];
+    mx[axis] = 2 * plane - z.box_min[axis];
+    const id = slugId(`${z.id}_mirror`, zones.map((x) => x.id));
+    // a box mirrored across the centreline of a symmetric zone is the zone itself: the copy is one-sided
+    setZones([...zones, { ...z, id, name: `${z.name} (mirrored)`, box_min: mn, box_max: mx, symmetric: axis === 1 ? false : z.symmetric }]);
+    setSel(zones.length);
+    setDirty(true);
+  };
+
   const setBox = (axis: number, end: 0 | 1, val: number) => {
     const mn = [...z.box_min];
     const mx = [...z.box_max];
-    (end === 0 ? mn : mx)[axis] = val;
+    // a face never passes the opposite one
+    if (end === 0) mn[axis] = Math.min(val, mx[axis] - 0.001);
+    else mx[axis] = Math.max(val, mn[axis] + 0.001);
     upd({ box_min: mn, box_max: mx });
   };
   const halfWidth = z ? Math.max(Math.abs(z.box_min[1] - yc), Math.abs(z.box_max[1] - yc)) : 0;
@@ -257,8 +316,8 @@ export function ZonesPanel({ onUse }: { onUse?: (paramIds: string[]) => void }) 
   const side = (
     <Stack gap={0}>
       <Hint>
-        Mark the parts of the vehicle the optimiser may reshape. Everything outside the zones keeps its imported shape exactly; inside, changes fade out smoothly towards
-        the zone's edges.
+        Mark the parts of the {element ? "element" : "vehicle"} the optimiser may reshape. Everything outside the zones keeps its imported shape exactly; inside, changes fade out
+        smoothly towards the zone's edges.{element ? " Zones are drawn on the element as imported, before its angle and height are applied." : ""}
       </Hint>
       <SectionTitle
         right={
@@ -296,6 +355,16 @@ export function ZonesPanel({ onUse }: { onUse?: (paramIds: string[]) => void }) 
               <Text size="xs" c="dimmed" truncate>
                 {x.moves.map((m) => `${DIR_LABEL[m.direction].toLowerCase()} ±${m.max_mm} mm`).join(", ")}
               </Text>
+              {x.enabled && overlaps[x.id] && (
+                <Text size="xs" c="yellow" truncate>
+                  Overlaps {overlaps[x.id].map((n) => `“${n}”`).join(", ")}: the changes add up there
+                </Text>
+              )}
+              {x.enabled && coverage[x.id] !== undefined && (
+                <Text size="xs" c={coverage[x.id] > 0 ? "dimmed" : "red"} truncate>
+                  {coverage[x.id] > 0 ? `Covers ${fmt(coverage[x.id], coverage[x.id] < 1 ? 2 : 0)} % of the surface` : "Its box misses the part: nothing would change"}
+                </Text>
+              )}
             </span>
             <Switch size="xs" checked={x.enabled} onClick={(e) => e.stopPropagation()} aria-label="Use this zone"
               onChange={(e) => { const on = e.currentTarget.checked; setZones((zs) => zs.map((y, k) => (k === i ? { ...y, enabled: on } : y))); setDirty(true); }} />
@@ -312,6 +381,7 @@ export function ZonesPanel({ onUse }: { onUse?: (paramIds: string[]) => void }) 
                 <IconFocus2 size={14} />
               </ActionIcon>
             </Tooltip>
+            <MirrorMenu defaults={[z.box_max[0], yc, z.box_min[2]]} onMirror={mirrorZone} label="Mirror a copy of this zone" />
             <Tooltip label="Remove this zone">
               <ActionIcon size="sm" variant="subtle" color="red" onClick={() => { setZones(zones.filter((_, i) => i !== sel)); setSel(0); setDirty(true); }} aria-label="Remove zone">
                 <IconTrash size={14} />
@@ -324,23 +394,26 @@ export function ZonesPanel({ onUse }: { onUse?: (paramIds: string[]) => void }) 
           <Stack gap={8}>
             <TextInput size="xs" label="Name" value={z.name} onChange={(e) => upd({ name: e.currentTarget.value })} />
             <Text size="xs" fw={500}>
-              Box (metres, vehicle frame: nose at the front, x rearwards, z up)
+              {element ? "Box (metres, as imported: x along the chord, y along the span, z up)" : "Box (metres, vehicle frame: nose at the front, x rearwards, z up)"}
+            </Text>
+            <Text size="xs" c="dimmed">
+              Drag the white handles on the box in the view, or drag a field's label left and right.
             </Text>
             <Group gap={6} grow>
-              <NumberInput size="xs" label="Front x" value={z.box_min[0]} decimalScale={3} step={0.01} onChange={(v) => setBox(0, 0, Number(v) || 0)} />
-              <NumberInput size="xs" label="Rear x" value={z.box_max[0]} decimalScale={3} step={0.01} onChange={(v) => setBox(0, 1, Number(v) || 0)} />
+              <ScrubField label="Front x" value={z.box_min[0]} step={0.005} decimals={3} units="m" onChange={(v) => setBox(0, 0, v)} />
+              <ScrubField label="Rear x" value={z.box_max[0]} step={0.005} decimals={3} units="m" onChange={(v) => setBox(0, 1, v)} />
             </Group>
             <Group gap={6} grow>
-              <NumberInput size="xs" label="Bottom z" value={z.box_min[2]} decimalScale={3} step={0.01} onChange={(v) => setBox(2, 0, Number(v) || 0)} />
-              <NumberInput size="xs" label="Top z" value={z.box_max[2]} decimalScale={3} step={0.01} onChange={(v) => setBox(2, 1, Number(v) || 0)} />
+              <ScrubField label="Bottom z" value={z.box_min[2]} step={0.005} decimals={3} units="m" onChange={(v) => setBox(2, 0, v)} />
+              <ScrubField label="Top z" value={z.box_max[2]} step={0.005} decimals={3} units="m" onChange={(v) => setBox(2, 1, v)} />
             </Group>
             {z.symmetric ? (
-              <NumberInput size="xs" label="Half width from the centreline" value={Number(halfWidth.toFixed(3))} decimalScale={3} step={0.01} min={0.01}
-                onChange={(v) => { const a = Math.max(0.01, Number(v) || 0.01); upd({ box_min: [z.box_min[0], yc - a, z.box_min[2]], box_max: [z.box_max[0], yc + a, z.box_max[2]] }); }} />
+              <ScrubField label="Half width from the centreline" value={halfWidth} step={0.005} decimals={3} units="m" min={0.01}
+                onChange={(v) => { const a = Math.max(0.01, v); upd({ box_min: [z.box_min[0], yc - a, z.box_min[2]], box_max: [z.box_max[0], yc + a, z.box_max[2]] }); }} />
             ) : (
               <Group gap={6} grow>
-                <NumberInput size="xs" label="Right y" value={z.box_min[1]} decimalScale={3} step={0.01} onChange={(v) => setBox(1, 0, Number(v) || 0)} />
-                <NumberInput size="xs" label="Left y" value={z.box_max[1]} decimalScale={3} step={0.01} onChange={(v) => setBox(1, 1, Number(v) || 0)} />
+                <ScrubField label="Right y" value={z.box_min[1]} step={0.005} decimals={3} units="m" onChange={(v) => setBox(1, 0, v)} />
+                <ScrubField label="Left y" value={z.box_max[1]} step={0.005} decimals={3} units="m" onChange={(v) => setBox(1, 1, v)} />
               </Group>
             )}
             <NumberInput size="xs" label="Fade-out distance" description="Inside the box edges the change fades smoothly to zero over this distance"

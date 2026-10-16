@@ -592,3 +592,22 @@ table.compact th {
 .ab-quick-goal[data-disabled] {
   border-left-color: var(--ab-line);
 }
+
+/* number fields whose label can be dragged to change the value (ScrubField) */
+.ab-scrub {
+  cursor: ew-resize;
+  user-select: none;
+  touch-action: none;
+  border-radius: 3px;
+  padding: 0 2px;
+  margin-left: -2px;
+}
+.ab-scrub:hover,
+.ab-scrub[data-dragging] {
+  color: var(--ab-accent);
+  background: color-mix(in srgb, var(--ab-accent) 12%, transparent);
+}
+.ab-scrub-arrows {
+  font-size: 0.85em;
+  opacity: 0.55;
+}

@@ -42,8 +42,14 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Props>(function Viewport3
       return;
     }
     setViewer(v);
+    // the live viewers, for automated interface tests (read-only use)
+    const reg = ((window as any).__abViewers ||= new Set<Viewer>()) as Set<Viewer>;
+    reg.add(v);
     onReady?.(v);
-    return () => v.dispose();
+    return () => {
+      reg.delete(v);
+      v.dispose();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

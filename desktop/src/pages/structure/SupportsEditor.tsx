@@ -7,7 +7,8 @@ import { ActionIcon, Button, Group, Menu, SimpleGrid, Stack, Switch, Text, TextI
 import { IconPlus, IconTrash } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
 import type { StructSupport, Vec3 } from "../../api/types";
-import { Hint, NumField } from "../../components/ui";
+import { ScrubField } from "../../components/ScrubField";
+import { Hint } from "../../components/ui";
 
 export const SUPPORT_COLOR = 0xe0b05c;
 
@@ -23,6 +24,9 @@ export function SupportsEditor({
   counts,
   onChange,
   bounds,
+  selected,
+  onSelect,
+  onLive,
 }: {
   supports: StructSupport[];
   presets: { preset: string; name: string; shapes: any[] }[];
@@ -31,8 +35,15 @@ export function SupportsEditor({
   onChange: (s: StructSupport[]) => void;
   /** extent of the analysed parts, for a new custom box */
   bounds: { min: Vec3; max: Vec3 } | null;
+  /** the selected support (controlled by the page, so the 3D view can select too) */
+  selected?: number;
+  onSelect?: (i: number) => void;
+  /** a box being dragged (shown at once, saved when released) */
+  onLive?: (id: string, min: Vec3, max: Vec3) => void;
 }) {
-  const [sel, setSel] = useState(0);
+  const [ownSel, setOwnSel] = useState(0);
+  const sel = selected ?? ownSel;
+  const setSel = onSelect ?? setOwnSel;
   useEffect(() => {
     if (sel >= supports.length) setSel(Math.max(0, supports.length - 1));
   }, [supports.length, sel]);
@@ -65,13 +76,21 @@ export function SupportsEditor({
     setSel(supports.length);
   };
   const upd = (patch: Partial<StructSupport>) => onChange(supports.map((x, i) => (i === sel ? { ...x, ...patch } : x)));
-  const setBox = (axis: number, end: 0 | 1, mm: number) => {
-    if (!s || s.shape.kind !== "box") return;
+  const boxWith = (axis: number, end: 0 | 1, mm: number): [Vec3, Vec3] | null => {
+    if (!s || s.shape.kind !== "box") return null;
     const mn = [...(s.shape.min as Vec3)] as Vec3;
     const mx = [...(s.shape.max as Vec3)] as Vec3;
-    (end === 0 ? mn : mx)[axis] = mm / 1000;
-    if (mn[axis] > mx[axis]) return;
-    upd({ shape: { ...s.shape, min: mn, max: mx } });
+    if (end === 0) mn[axis] = Math.min(mm / 1000, mx[axis] - 0.0005);
+    else mx[axis] = Math.max(mm / 1000, mn[axis] + 0.0005);
+    return [mn, mx];
+  };
+  const setBox = (axis: number, end: 0 | 1, mm: number) => {
+    const b = boxWith(axis, end, mm);
+    if (b && s) upd({ shape: { ...s.shape, min: b[0], max: b[1] } });
+  };
+  const liveBox = (axis: number, end: 0 | 1, mm: number) => {
+    const b = boxWith(axis, end, mm);
+    if (b && s) onLive?.(s.id, b[0], b[1]);
   };
 
   return (
@@ -128,13 +147,18 @@ export function SupportsEditor({
           </Group>
           <SimpleGrid cols={3} spacing={6}>
             {(["x", "y", "z"] as const).map((a, i) => (
-              <NumField key={`lo${a}`} label={`${a} from`} units="mm" value={(s.shape.min as Vec3)[i] * 1000} decimals={1} onCommit={(v) => setBox(i, 0, v)} />
+              <ScrubField key={`lo${a}${s.id}`} label={`${a} from`} units="mm" value={(s.shape.min as Vec3)[i] * 1000} decimals={1} step={1}
+                onChange={(v) => liveBox(i, 0, v)} onCommit={(v) => setBox(i, 0, v)} />
             ))}
             {(["x", "y", "z"] as const).map((a, i) => (
-              <NumField key={`hi${a}`} label={`${a} to`} units="mm" value={(s.shape.max as Vec3)[i] * 1000} decimals={1} onCommit={(v) => setBox(i, 1, v)} />
+              <ScrubField key={`hi${a}${s.id}`} label={`${a} to`} units="mm" value={(s.shape.max as Vec3)[i] * 1000} decimals={1} step={1}
+                onChange={(v) => liveBox(i, 1, v)} onCommit={(v) => setBox(i, 1, v)} />
             ))}
           </SimpleGrid>
-          <Hint>Coordinates as in the flow simulation (x downstream, z up). Everything of the part inside the box is held.</Hint>
+          <Hint>
+            Coordinates as in the flow simulation (x downstream, z up). Everything of the part inside the box is held. Drag a field's label, or the white handles of the
+            selected box in the view.
+          </Hint>
         </Stack>
       )}
       {s && s.shape.kind !== "box" && <Hint>This support is a {s.shape.kind}; edit it in the project file.</Hint>}

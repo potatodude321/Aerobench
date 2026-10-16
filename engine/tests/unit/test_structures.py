@@ -10,11 +10,11 @@ from aerobench.core.errors import AeroBenchError
 from aerobench.domain.structure import Material, StructureConfig
 from aerobench.structures.ccx import detect_calculix
 from aerobench.structures.deck import write_deck
-from aerobench.structures.expansion import choose_offsets
+from aerobench.structures.expansion import ISOLATE, ccx_normals, jacobian_ratio, plan_expansion
 from aerobench.structures.loads import map_loads, s6_shape, subdivision_points
 from aerobench.structures.materials import BUILTIN, all_materials, load_user_library
 from aerobench.structures.mesh import StructMesh
-from aerobench.structures.refine import improve
+from aerobench.structures.remesh import quality, remesh
 from aerobench.structures.results import MODES, assess, max_stress_rf, parse_dat, summarise, tsai_wu_rf
 
 CCX = detect_calculix()
@@ -156,42 +156,63 @@ def test_loads_of_unknown_part_are_reported():
 
 
 # ---------------------------------------------------------------------------- mesh
-def test_refine_keeps_shape_orientation_and_parts():
-    P1, F1 = tube(r=0.02, length=0.5, nc=24, nl=1)  # long slivers
+def _area(P, F):
+    t = P[F]
+    return 0.5 * np.linalg.norm(np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]), axis=1)
+
+
+def test_remesh_keeps_shape_orientation_and_parts():
+    P1, F1 = tube(r=0.02, length=0.5, nc=24, nl=1)  # one strip of long slivers (a CAD export)
     P2, F2 = tube(r=0.02, length=0.5, nc=24, nl=1, x0=0.2)
     P = np.vstack([P1, P2])
     F = np.vstack([F1, F2 + len(P1)])
     R = np.r_[np.zeros(len(F1), int), np.ones(len(F2), int)]
-
-    def area(P, F):
-        t = P[F]
-        return 0.5 * np.linalg.norm(np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]), axis=1)
-
-    target = 0.02
-    P_, F_, R_, info = improve(P, F, R, target, max_faces=20000)
-    assert info["faces_out"] > 4 * len(F)
-    assert area(P_, F_).sum() == pytest.approx(area(P, F).sum(), rel=1e-9)
-    for r, x0 in ((0, 0.0), (1, 0.2)):
-        assert area(P_, F_[R_ == r]).sum() == pytest.approx(area(P, F[R == r]).sum(), rel=1e-9)
-        # every vertex of a part stays on that part's tube (no mixing, no moving off the facets)
-        v = P_[np.unique(F_[R_ == r])]
-        rad = np.hypot(v[:, 0] - x0, v[:, 1])
-        assert np.all(rad <= 0.02 + 1e-12) and np.all(rad >= 0.02 * math.cos(math.pi / 24) - 1e-12)
+    h = 0.01
+    r = remesh(P, F, R, h, h_min=0.004)
+    P_, F_, R_ = r.points, r.faces, r.regions
+    q = quality(P_, F_)
+    assert np.median(q) > 0.85 and q.min() > 0.25  # from slivers of quality 0.02
     t = P_[F_]
-    e = np.linalg.norm(t - np.roll(t, -1, axis=1), axis=2)
-    assert e.max() <= 1.334 * target
+    assert np.linalg.norm(t - np.roll(t, -1, axis=1), axis=2).max() <= 4.0 / 3.0 * h + 1e-9
+    for part, x0 in ((0, 0.0), (1, 0.2)):
+        assert _area(P_, F_[R_ == part]).sum() == pytest.approx(_area(P, F[R == part]).sum(), rel=0.01)
+        # every vertex of a part stays on that part's (faceted) tube; the open ends stay where they are
+        v = P_[np.unique(F_[R_ == part])]
+        rad = np.hypot(v[:, 0] - x0, v[:, 1])
+        assert np.all(rad <= 0.02 + 1e-9) and np.all(rad >= 0.02 * math.cos(math.pi / 24) - 1e-9)
+        assert v[:, 2].min() == pytest.approx(0.0, abs=1e-12) and v[:, 2].max() == pytest.approx(0.5, abs=1e-12)
     # orientation unchanged: normals still point away from each tube's axis
     n = np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0])
     c = t.mean(1)
     axis_x = np.where(R_ == 0, 0.0, 0.2)
-    radial = np.stack([c[:, 0] - axis_x, c[:, 1], np.zeros(len(c))], 1)
-    assert np.all((n * radial).sum(1) > 0)
+    assert np.all((n * np.stack([c[:, 0] - axis_x, c[:, 1], np.zeros(len(c))], 1)).sum(1) > 0)
 
 
-def test_refine_respects_the_element_budget():
+def test_remesh_cleans_a_production_mesh_and_keeps_sharp_edges():
+    from aerobench.geometry import fixtures as fx
+
+    # a UV sphere (slivers fanning into the poles) and a box (sharp edges and corners)
+    s = fx.sphere(0.1, n_lat=96, n_lon=192)
+    r = remesh(s.points, s.faces, np.zeros(s.n_faces, int), 0.01)
+    q = quality(r.points, r.faces)
+    assert q.min() > 0.5 and q.min() > 5 * quality(s.points, s.faces).min()
+    assert np.linalg.norm(r.points, axis=1) == pytest.approx(0.1, rel=0.002)
+    b = fx.box((0.0, 0.0, 0.0), (0.2, 0.1, 0.05), n=2)
+    r = remesh(b.points, b.faces, np.zeros(b.n_faces, int), 0.01)
+    assert r.points.min(0) == pytest.approx([0, 0, 0], abs=1e-12) and r.points.max(0) == pytest.approx([0.2, 0.1, 0.05], abs=1e-12)
+    assert _area(r.points, r.faces).sum() == pytest.approx(0.07, rel=1e-9)  # flat faces, kept edges: no area lost
+    on_face = np.isclose(r.points, 0.0, atol=1e-12) | np.isclose(r.points, [0.2, 0.1, 0.05], atol=1e-12)
+    assert on_face.any(axis=1).all()  # every node on the box
+    assert len(r.feature_pairs) and quality(r.points, r.faces).min() > 0.4
+
+
+def test_structural_mesh_fits_the_element_budget():
+    from aerobench.structures.mesh import _remesh
+
     P, F = tube(r=0.02, length=0.5, nc=24, nl=1)
-    _, F_, _, info = improve(P, F, np.zeros(len(F), int), 0.002, max_faces=3000)
-    assert len(F_) <= 3000 and info["faces_out"] == len(F_)
+    notes: list[str] = []
+    _, F_, R_, feats = _remesh(P, F, np.zeros(len(F), int), 3000, notes)
+    assert 1500 < len(F_) <= 3000 and len(R_) == len(F_) and "remeshed" in notes[0]
 
 
 # ---------------------------------------------------------------------------- shell expansion
@@ -200,13 +221,58 @@ def test_section_offset_follows_what_fits_the_curvature():
     m = StructMesh(points=P, tris=F, part=np.zeros(len(F), int), part_ids=["t"])
     X, C = m.s6()
     sec = np.zeros(len(F), int)
-    assert choose_offsets(X, C, m.normals(), sec, [0.3 * 0.005]).offsets == [0.5]  # fits inside
-    ch = choose_offsets(X, C, m.normals(), sec, [0.95 * 0.005])
-    assert ch.offsets == [0.0] and ch.centred == [0] and not ch.failing  # only fits centred
-    assert choose_offsets(X, C, m.normals(), sec, [2.6 * 0.005]).failing  # does not fit at all
+    p = plan_expansion(X, C, sec, [0.3 * 0.005])
+    assert p.offsets == [0.5] and not len(p.isolated)  # fits inside
+    p = plan_expansion(X, C, sec, [0.95 * 0.005])
+    assert p.offsets == [0.0] and p.centred == [0] and not len(p.isolated)  # only fits centred
 
 
-def test_too_thick_section_is_refused_before_solving(tmp_path):
+def kinked_strip(w: float = 0.0002, angle_deg: float = 15.0) -> StructMesh:
+    """A strip along x bent down by ``angle_deg`` just after a row of elements only ``w`` wide (a
+    sliver of a CAD tessellation at a crease): the normals CalculiX shares across the bend (less
+    than 20 degrees) differ across that row, so a wall much thicker than ``w`` folds there."""
+    xs = np.array([0.0, 0.25, 0.5, 0.5 + w, 0.75, 1.0])
+    ys = np.array([0.0, 0.1, 0.2])
+    P = []
+    for y in ys:
+        for x in xs:
+            z = -(x - (0.5 + w)) * math.tan(math.radians(angle_deg)) if x > 0.5 + w else 0.0
+            P.append((x, y, z))
+    P = np.array(P)
+    n = len(xs)
+    T = []
+    for j in range(len(ys) - 1):
+        for i in range(n - 1):
+            a, b, c, d = j * n + i, j * n + i + 1, (j + 1) * n + i + 1, (j + 1) * n + i
+            T += [(a, b, c), (a, c, d)]
+    T = np.array(T)
+    return StructMesh(points=P, tris=T, part=np.zeros(len(T), dtype=np.int64), part_ids=["strip"])
+
+
+def test_elements_that_would_fold_get_their_own_normals():
+    m = kinked_strip()
+    X, C = m.s6()
+    F = m.tris
+    sec = np.zeros(len(F), int)
+    t = 0.005
+    fn = m.normals()
+    lo, hi = -t * np.ones(len(F)), np.zeros(len(F))
+    assert (jacobian_ratio(X, C, ccx_normals(C, fn), lo, hi) <= 0.02).any()  # CalculiX alone would stop
+    p = plan_expansion(X, C, sec, [t])
+    assert len(p.isolated) and p.offsets == [0.5] and not len(p.still_folding) and p.isolated_area_fraction < 0.01
+    # with the isolated elements' offsets the shared normals no longer fold anything
+    off = p.element_offsets(sec)
+    _, key = np.unique(np.round(np.stack([np.full(len(F), t), off], 1), 12), axis=0, return_inverse=True)
+    r = jacobian_ratio(X, C, ccx_normals(C, fn, key.reshape(-1)), -(off + 0.5) * t, -(off - 0.5) * t)
+    assert r.min() > 0.02
+    # neighbouring isolated elements are in different groups
+    for e in p.isolated:
+        nb = [o for o in p.isolated if o != e and set(C[o]) & set(C[e])]
+        assert all(p.colour[o] != p.colour[e] for o in nb)
+    assert ISOLATE * (p.colour.max() + 1) < 0.15
+
+
+def test_far_too_thick_section_is_refused_before_solving(tmp_path):
     P, F = tube(r=0.005)
     m = StructMesh(points=P, tris=F, part=np.zeros(len(F), int), part_ids=["t"])
     st = sheet_config("al_6061_t6", 0.013, [{"id": "a", "name": "A", "shape": {"kind": "box", "min": [-1, -1, -0.001], "max": [1, 1, 0.006]}}])
@@ -214,6 +280,15 @@ def test_too_thick_section_is_refused_before_solving(tmp_path):
     with pytest.raises(AeroBenchError) as e:
         write_deck(tmp_path / "m.inp", m, st, all_materials([]), np.zeros((len(nodes), 3)), 1.0)
     assert e.value.diagnostic.code == "structure.shell_too_thick"
+
+
+@needs_ccx
+def test_isolated_elements_solve_in_calculix(tmp_path):
+    m = kinked_strip()
+    st = sheet_config("al_6061_t6", 0.005, [{"id": "a", "name": "A", "shape": {"kind": "box", "min": [-1, -1, -1], "max": [0.001, 1, 1]}}])
+    info, res = run_ccx(tmp_path, m, st, tip_load(m, 10.0))
+    assert info.own_normal_elements > 0 and "_I0" in (tmp_path / "model.inp").read_text()
+    assert np.abs(res["U:NCORNER"][:, 3]).max() > 0
 
 
 # ---------------------------------------------------------------------------- deck
@@ -384,3 +459,20 @@ def test_element_setup_places_the_element_over_the_ground(element_project):
     out = el.apply_element_setup(p, environment="free_stream", free_stream_chords=4.0)
     assert out["clearance"] == pytest.approx(4.0 * out["chord"])
     assert _clearance(p) == pytest.approx(4.0 * out["chord"], abs=1e-6)
+
+
+def test_a_separate_piece_without_support_is_named_before_solving(tmp_path):
+    P1, F1 = tube(r=0.01, length=0.1, nc=12, nl=4)
+    P2, F2 = tube(r=0.01, length=0.1, nc=12, nl=4, x0=0.1)
+    P = np.vstack([P1, P2])
+    F = np.vstack([F1, F2 + len(P1)])
+    part = np.r_[np.zeros(len(F1), int), np.ones(len(F2), int)]
+    m = StructMesh(points=P, tris=F, part=part, part_ids=["main", "endplate"])
+    st = sheet_config("al_6061_t6", 0.001, [{"id": "a", "name": "A", "shape": {"kind": "box", "min": [-0.02, -0.02, -0.001], "max": [0.02, 0.02, 0.001]}}])
+    nodes, _ = m.s6()
+    with pytest.raises(AeroBenchError) as e:
+        write_deck(tmp_path / "m.inp", m, st, all_materials([]), np.zeros((len(nodes), 3)), 1.0)
+    assert e.value.diagnostic.code == "structure.piece_not_held" and "'endplate'" in e.value.diagnostic.summary
+    st.supports.append(st.supports[0].model_copy(update={"id": "b", "name": "B", "shape": st.supports[0].shape.model_copy(
+        update={"min": (0.08, -0.02, -0.001), "max": (0.12, 0.02, 0.001)})}))
+    write_deck(tmp_path / "m.inp", m, st, all_materials([]), np.zeros((len(nodes), 3)), 1.0)

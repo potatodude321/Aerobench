@@ -1,16 +1,16 @@
 """Structural surface mesh: the CFD surface of the analysed parts, as quadratic shell
 triangles (CalculiX S6).
 
-The same triangles the flow solution was computed on are used — posed exactly as in the CFD
-case — so the wall loads map onto the structure without any interpolation across shapes.
-Degenerate triangles are removed; closed parts are oriented with outward normals (the ply
-order of a laminate runs from the outer surface inwards); very fine CAD tessellations are
-coarsened to a size the direct solver handles, and coarse ones are divided (``refine``:
-edge splits at existing surface points and diagonal swaps on flat patches, so the shape
-does not change) until no element is longer than about the size half the element budget
-allows. CAD exports are long thin triangles; the quadratic S6 shell is tolerant of that
-shape (a cantilever of 125:1 slivers deflects within 10 % of beam theory) as long as the
-elements are short enough along the direction the part bends, which the division ensures.
+The parts are taken posed exactly as in the CFD case, so the wall loads (sampled from the
+flow solution's wall faces, see ``loads``) act where the flow put them. The surface is then
+remeshed for the shell model (``remesh``): triangles of about the size the element budget
+allows, smaller where the surface curves tightly, well shaped everywhere, with the sharp
+edges and the borders between parts kept and every node on the original surface. A
+production mesh made for the flow (fine, with slivers where CAD faces meet) and a CAD export
+(long thin strips) both come out the same way; neither suits shells as it is, because CalculiX
+expands every triangle through the laminate thickness and slivers next to kinks fold over.
+Closed parts are oriented with outward normals (the ply order of a laminate runs from the
+outer surface inwards).
 
 Two idealisations:
 * ``skin``: the whole surface is a shell — hollow or foam-filled elements, moulded skins;
@@ -33,7 +33,7 @@ from ..domain.structure import StructureModel
 from ..geometry.fastops import unique_int_rows
 from ..geometry.pose import posed_components
 from ..geometry.trisurface import TriSurface
-from .refine import improve
+from .remesh import EQ_AREA, remesh
 
 
 @dataclass
@@ -47,6 +47,7 @@ class StructMesh:
     mid_points: Optional[np.ndarray] = None  # (K, 3) mid-edge nodes
     tri_mids: Optional[np.ndarray] = None  # (M, 3) indices into mid_points for edges 01, 12, 20
     closed_parts: list[str] = field(default_factory=list)
+    features: Optional[np.ndarray] = None  # (K, 2) corner node pairs of sharp edges and part borders
 
     @property
     def n_tris(self) -> int:
@@ -178,12 +179,12 @@ def build_structural_mesh(project, cfg: ProjectConfig, decimate=None) -> StructM
     merged = TriSurface.merge(surfs)
     st = cfg.structure
     limit = st.max_elements
-    if merged.n_faces > limit:
+    if merged.n_faces > MAX_REMESH_INPUT:
         if decimate is None:
             raise AeroBenchError.make("structure.too_fine", ErrorCategory.CONFIGURATION,
-                                      f"The parts have {merged.n_faces} triangles, more than the {limit} the structural model allows.",
-                                      action="Raise the element limit on the Structure page, or simplify the parts.")
-        merged, note = decimate(merged, limit)
+                                      f"The parts have {merged.n_faces} triangles, more than the {MAX_REMESH_INPUT} the structural mesher reads.",
+                                      action="Simplify the parts for the structural check.")
+        merged, note = decimate(merged, MAX_REMESH_INPUT)
         notes.append(note)
     faces, closed = _orient_outward(merged.points, merged.faces)
     part = merged.regions.astype(np.int64)
@@ -213,30 +214,38 @@ def build_structural_mesh(project, cfg: ProjectConfig, decimate=None) -> StructM
         points = merged.points
         if open_parts:
             notes.append("Not closed (open edges): " + ", ".join(open_parts) + ". Their shell normals follow the file; check the ply order.")
-    points, faces, part = _refine(np.asarray(points, dtype=float), np.asarray(faces, dtype=np.int64), part, limit, notes)
+    points, faces, part, feats = _remesh(np.asarray(points, dtype=float), np.asarray(faces, dtype=np.int64), part, limit, notes)
     m = StructMesh(points=np.asarray(points, dtype=float), tris=np.asarray(faces, dtype=np.int64), part=part, part_ids=list(merged.region_names),
-                   model=st.model.value, notes=notes, closed_parts=closed_parts)
+                   model=st.model.value, notes=notes, closed_parts=closed_parts, features=feats)
     q = m.quality()
-    if q["poor_triangles"] > 0.25 * q["triangles"]:
-        m.notes.append(f"{q['poor_triangles']} of {q['triangles']} triangles are long and thin (CAD tessellation). The shell elements "
-                       "tolerate this; stress peaks right next to them are less precise.")
+    if q["poor_triangles"] > 0.02 * q["triangles"]:
+        m.notes.append(f"{q['poor_triangles']} of {q['triangles']} triangles are long and thin (between sharp edges that are very close "
+                       "together). The shell elements tolerate this; stress peaks right next to them are less precise.")
     return m
 
 
-def refine_target(area: float, limit: int) -> float:
-    """Largest element edge (m) so that equilateral elements would use half the budget."""
-    return math.sqrt(area / (0.433 * 0.5 * max(limit, 100)))
+MAX_REMESH_INPUT = 600_000  # triangles read by the structural mesher (larger surfaces are coarsened first)
+BUDGET_SHARE = 0.7  # of the element limit, at the base size; the rest is for tight curves
 
 
-def _refine(points: np.ndarray, faces: np.ndarray, part: np.ndarray, limit: int, notes: list[str]):
+def element_size(area: float, limit: int) -> tuple[float, float]:
+    """Base element edge (m) and the smallest one allowed on tight curves for ``limit`` elements."""
+    h = math.sqrt(area / (EQ_AREA * BUDGET_SHARE * max(limit, 100)))
+    return h, min(h, max(h / 4.0, 0.0015))
+
+
+def _remesh(points: np.ndarray, faces: np.ndarray, part: np.ndarray, limit: int, notes: list[str]):
     t = points[faces]
     area = float(0.5 * np.linalg.norm(np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]), axis=1).sum())
     if area <= 0 or len(faces) == 0:
-        return points, faces, part
-    target = refine_target(area, limit)
-    P, F, R, info = improve(points, faces, part, target, max_faces=limit, tolerance=min(1e-5, 1e-3 * target))
-    if info["faces_out"] > info["faces_in"]:
-        size = f"edges were divided to at most about {info['size'] * 1250:.0f} mm" + (
-            f" (as far as the limit of {limit} elements allows)" if info["budget_reached"] else "")
-        notes.append(f"The surface was divided into {info['faces_out']} triangles (from {info['faces_in']}): {size}. The shape is unchanged.")
-    return P, F, R
+        return points, faces, part, None
+    h, h_min = element_size(area, limit)
+    r = remesh(points, faces, part, h, h_min=h_min, max_faces=limit)
+    if len(r.faces) > limit:  # the size field is scaled to the budget; a coarse first guess can still overshoot
+        f = math.sqrt(len(r.faces) / limit) * 1.05
+        h, h_min = h * f, min(h * f, h_min * f)
+        r = remesh(points, faces, part, h, h_min=h_min, max_faces=limit)
+    small = f" (down to {h_min * 1000:.1f} mm where the surface curves tightly)" if h_min < h else ""
+    notes.append(f"The surface was remeshed for the shell model: {len(r.faces)} triangles of about {h * 1000:.1f} mm{small}, from "
+                 f"{len(faces)}. Sharp edges and the borders between parts are kept; every node lies on the original surface.")
+    return r.points, r.faces, np.asarray(r.regions, dtype=np.int64), r.feature_pairs

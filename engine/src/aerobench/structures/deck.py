@@ -42,7 +42,7 @@ import numpy as np
 from ..core.errors import AeroBenchError, ErrorCategory
 from ..domain.mesh import BoxShape, CylinderShape, SphereShape
 from ..domain.structure import Material, MaterialKind, Section, SectionKind, StructureConfig
-from .expansion import choose_offsets
+from .expansion import ISOLATE, plan_expansion
 from .mesh import StructMesh
 
 
@@ -51,6 +51,7 @@ def _err(code: str, msg: str, action: str = "") -> AeroBenchError:
 
 
 PATCH_MIN_ELEMENTS = 4  # whole elements inside a support for it to hold a patch
+TOO_THICK_SHARE = 0.25  # of a section's area expanded along own normals, above which a shell model is refused
 
 
 def fibonacci_directions(n: int = 400) -> np.ndarray:
@@ -123,6 +124,9 @@ class DeckInfo:
     held_by_supports: list[float] = field(default_factory=list)  # applied + weight on supported nodes (N)
     section_offsets: list[float] = field(default_factory=list)  # CalculiX OFFSET per section
     centred_sections: list[str] = field(default_factory=list)  # names of sections centred on the surface
+    own_normal_elements: int = 0  # elements expanded along their own facet (they would fold along the smooth normals)
+    own_normal_area_fraction: float = 0.0
+    own_normal_example: list[float] = field(default_factory=list)  # a location of one of them (m)
     orientation_bins: int = 0
 
     def as_dict(self) -> dict[str, Any]:
@@ -136,6 +140,42 @@ def _fmt(v: float) -> str:
 def _id_lines(ids: np.ndarray, per: int = 16) -> str:
     ids = np.asarray(ids) + 1
     return "\n".join(", ".join(str(int(x)) for x in ids[i:i + per]) for i in range(0, len(ids), per)) + "\n"
+
+
+def _check_every_piece_is_held(mesh: StructMesh, held: np.ndarray) -> None:
+    """Each separate piece of the surface (parts that share no nodes are not joined in the shell
+    model) needs a support of its own; one that has none would be free to fly away."""
+    from .mesh import _shells
+
+    lab = _shells(mesh.tris, len(mesh.points))
+    held_corner = np.zeros(len(mesh.points), dtype=bool)
+    held_corner[held[held < len(mesh.points)]] = True
+    pieces = np.unique(lab)
+    if len(pieces) < 2 and held_corner.any():
+        return
+    for k in pieces:
+        faces = mesh.tris[lab == k]
+        if held_corner[faces.reshape(-1)].any():
+            continue
+        names = sorted({mesh.part_ids[i] for i in np.unique(mesh.part[lab == k])}) if mesh.part_ids else []
+        c = mesh.points[np.unique(faces)].mean(axis=0) * 1000.0
+        what = f"'{', '.join(names)}'" if names else "A piece of the part"
+        raise _err("structure.piece_not_held",
+                   f"{what} (around x = {c[0]:.0f}, y = {c[1]:.0f}, z = {c[2]:.0f} mm) is a separate piece of the surface with no support: "
+                   "it is not joined to the rest in the shell model, so nothing holds it.",
+                   "Add a support where it is attached, leave it out of the check, or join it to the rest in your CAD model (one body).")
+
+
+def _split_isolated(name: str, members: np.ndarray, colour: np.ndarray, offset: float):
+    """The element set and, for its isolated elements, one per group whose offset differs by
+    ISOLATE per group (so CalculiX gives them normals of their own)."""
+    c = colour[members]
+    out = []
+    if (c < 0).any():
+        out.append((name, members[c < 0], offset))
+    for g in np.unique(c[c >= 0]):
+        out.append((f"{name}_I{int(g)}", members[c == g], offset - ISOLATE * (int(g) + 1)))
+    return out
 
 
 def write_deck(path: Path, mesh: StructMesh, st: StructureConfig, materials: dict[str, Material], nodal_forces: np.ndarray,
@@ -165,6 +205,7 @@ def write_deck(path: Path, mesh: StructMesh, st: StructureConfig, materials: dic
             raise _err("structure.support_empty", f"Support '{sp.name}' holds {len(ids)} node(s); it must contain part of the surface.",
                        "Move or enlarge it so that it overlaps the part where it is attached.")
         sup_sets[sp.id] = ids
+    _check_every_piece_is_held(mesh, np.unique(np.concatenate(list(sup_sets.values()))))
     area = mesh.areas()
     normals = mesh.normals()
     info = DeckInfo(n_corner=n_corner, n_nodes=len(nodes), element_section=sec_of.tolist())
@@ -195,20 +236,31 @@ def write_deck(path: Path, mesh: StructMesh, st: StructureConfig, materials: dic
     all_sup = np.unique(np.concatenate(list(sup_sets.values())))
     info.held_by_supports = F[all_sup].sum(0).tolist()
     F[all_sup] = 0.0
-    # nodes on the outer surface (skin) or on the chosen face (plate): material inside, unless it does not fit
-    choice = choose_offsets(nodes, conn, normals, sec_of, info.section_thickness)
-    if choice.failing:
-        k, bad = next(iter(choice.failing.items()))
-        cent = mesh.centroids()[bad]
+    # nodes on the outer surface (skin) or on the chosen face (plate): material inside; an element
+    # whose expansion would fold is isolated (its own normal, see expansion.py)
+    plan = plan_expansion(nodes, conn, sec_of, info.section_thickness)
+    if len(plan.still_folding):
+        cent = mesh.centroids()[plan.still_folding]
         where = cent[np.argmin(cent[:, 0])] * 1000.0
-        sec = st.sections[k]
-        raise _err("structure.shell_too_thick",
-                   f"Section '{sec.name}' ({sec.total_thickness() * 1000:.1f} mm) is thicker than the tightest curves of the part allow "
-                   f"({len(bad)} element(s), e.g. near x = {where[0]:.0f}, y = {where[1]:.0f}, z = {where[2]:.0f} mm): the shell would fold "
-                   "over itself there.",
-                   "Use a thinner section, the plate model, or give the part a less sharp edge there.")
-    info.section_offsets = list(choice.offsets)
-    info.centred_sections = [st.sections[k].name for k in choice.centred]
+        raise _err("structure.shell_folds",
+                   f"{len(plan.still_folding)} element(s) of the structural mesh are degenerate and cannot be expanded through the "
+                   f"thickness (e.g. near x = {where[0]:.0f}, y = {where[1]:.0f}, z = {where[2]:.0f} mm).",
+                   "Repair the part's surface there (Geometry, Repair) and prepare the structural check again.")
+    area_iso = np.bincount(sec_of[plan.isolated], weights=area[plan.isolated], minlength=len(st.sections))
+    area_sec = np.bincount(sec_of, weights=area, minlength=len(st.sections))
+    for k, sec in enumerate(st.sections):
+        if area_sec[k] > 0 and area_iso[k] > TOO_THICK_SHARE * area_sec[k]:
+            raise _err("structure.shell_too_thick",
+                       f"Section '{sec.name}' ({sec.total_thickness() * 1000:.1f} mm) is thicker than the part is curved over "
+                       f"{area_iso[k] / area_sec[k] * 100:.0f} % of its area: a shell model does not represent it there.",
+                       "Use a thinner section or the plate model; a part this thick for its size needs a solid model.")
+    info.section_offsets = list(plan.offsets)
+    info.centred_sections = [st.sections[k].name for k in plan.centred]
+    info.own_normal_elements = int(len(plan.isolated))
+    info.own_normal_area_fraction = plan.isolated_area_fraction
+    if len(plan.isolated):
+        cent = mesh.centroids()[plan.isolated]
+        info.own_normal_example = cent[np.argmin(cent[:, 0])].tolist()
     lines: list[str] = ["*HEADING", "AeroBench structural check (linear static, S6 shells)"]
     lines.append("*NODE, NSET=NALL")
     lines += [f"{i + 1}, {_fmt(p[0])}, {_fmt(p[1])}, {_fmt(p[2])}" for i, p in enumerate(nodes)]
@@ -236,11 +288,11 @@ def write_deck(path: Path, mesh: StructMesh, st: StructureConfig, materials: dic
         if len(sel) == 0:
             continue
         if s.kind == SectionKind.SHEET:
-            name = f"E_{s.id}"
-            lines.append(f"*ELSET, ELSET={name}")
-            lines.append(_id_lines(sel).rstrip("\n"))
-            lines.append(f"*SHELL SECTION, ELSET={name}, MATERIAL={s.material}, OFFSET={choice.offsets[k]:g}")
-            lines.append(_fmt(float(s.thickness)))  # type: ignore[arg-type]
+            for suffix, members, off in _split_isolated(f"E_{s.id}", sel, plan.colour, plan.offsets[k]):
+                lines.append(f"*ELSET, ELSET={suffix}")
+                lines.append(_id_lines(members).rstrip("\n"))
+                lines.append(f"*SHELL SECTION, ELSET={suffix}, MATERIAL={s.material}, OFFSET={off:g}")
+                lines.append(_fmt(float(s.thickness)))  # type: ignore[arg-type]
             continue
         stack = list(reversed(s.stack()))  # CalculiX: from the negative-normal (inner) side
         z0 = np.asarray(s.zero_direction, dtype=float)
@@ -258,9 +310,6 @@ def write_deck(path: Path, mesh: StructMesh, st: StructureConfig, materials: dic
                         break
             e0 /= np.linalg.norm(e0)
             e90 = np.cross(nbar, e0)
-            name = f"E_{s.id}_{int(b)}"
-            lines.append(f"*ELSET, ELSET={name}")
-            lines.append(_id_lines(members).rstrip("\n"))
             angles = sorted({p.angle for p in stack})
             onames = {}
             for a in angles:
@@ -271,8 +320,11 @@ def write_deck(path: Path, mesh: StructMesh, st: StructureConfig, materials: dic
                 onames[a] = on
                 lines.append(f"*ORIENTATION, NAME={on}")
                 lines.append(", ".join(_fmt(v) for v in (*ax, *bx)))
-            lines.append(f"*SHELL SECTION, ELSET={name}, COMPOSITE, OFFSET={choice.offsets[k]:g}")
-            lines += [f"{_fmt(p.thickness)}, , {p.material}, {onames[p.angle]}" for p in stack]
+            for name, part_members, off in _split_isolated(f"E_{s.id}_{int(b)}", members, plan.colour, plan.offsets[k]):
+                lines.append(f"*ELSET, ELSET={name}")
+                lines.append(_id_lines(part_members).rstrip("\n"))
+                lines.append(f"*SHELL SECTION, ELSET={name}, COMPOSITE, OFFSET={off:g}")
+                lines += [f"{_fmt(p.thickness)}, , {p.material}, {onames[p.angle]}" for p in stack]
             n_bins += 1
     info.orientation_bins = n_bins
     # supports

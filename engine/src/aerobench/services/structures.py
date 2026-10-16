@@ -38,7 +38,7 @@ from ..structures.results import assess, parse_dat, summarise
 from .context import AppContext
 from .runs import run_record
 
-FORMAT = 5  # 2: loads on all S6 nodes; 4: edge division with flat quads; 5: total-force check for one part
+FORMAT = 6  # 2: loads on all S6 nodes; 4: edge division with flat quads; 5: total-force check for one part; 6: remeshed, features
 
 
 def _err(code: str, msg: str, action: str = "", cat: ErrorCategory = ErrorCategory.CONFIGURATION) -> AeroBenchError:
@@ -156,7 +156,8 @@ def prepare(project: Project, ctx: AppContext, viz, st: Optional[StructureConfig
     mapped = map_loads(mesh, data, rho=cfg.physics.fluid.density, p_ref=p_ref)
     cfd = _cfd_component_forces(project, run, mesh.part_ids, cfg)
     np.savez(cdir / "mesh.npz", points=mesh.points, tris=mesh.tris, part=mesh.part, part_ids=np.array(json.dumps(mesh.part_ids)),
-             closed=np.array(json.dumps(mesh.closed_parts)))
+             closed=np.array(json.dumps(mesh.closed_parts)),
+             features=mesh.features if mesh.features is not None else np.zeros((0, 2), dtype=np.int64))
     np.savez(cdir / "loads.npz", nodal=mapped.nodal, traction=mapped.tri_traction, total=mapped.total)
     diff = None
     if cfd is not None and np.linalg.norm(cfd) > 0:
@@ -181,7 +182,7 @@ def _prep_data(project: Project, key: str) -> tuple[StructMesh, dict[str, np.nda
     cdir = project.cache_dir("structure", "prep", check_id(key, "key"))
     with np.load(cdir / "mesh.npz") as d:
         mesh = StructMesh(points=d["points"], tris=d["tris"], part=d["part"], part_ids=json.loads(str(d["part_ids"])),
-                          closed_parts=json.loads(str(d["closed"])))
+                          closed_parts=json.loads(str(d["closed"])), features=d["features"] if "features" in d.files else None)
     with np.load(cdir / "loads.npz") as d:
         loads = {k: d[k] for k in d.files}
     return mesh, loads
@@ -314,6 +315,13 @@ def ingest_structure(project: Project, sid: str) -> dict[str, Any]:
     for name in deck.get("centred_sections") or []:
         summary["notes"].append(f"Section '{name}' is centred on the surface (half its thickness outside): it does not fit inside "
                                 "the tightest curves of the part at its full thickness.")
+    n_own = int(deck.get("own_normal_elements") or 0)
+    if n_own:
+        where = np.asarray(deck.get("own_normal_example") or [0.0, 0.0, 0.0]) * 1000.0
+        summary["notes"].append(f"{n_own} element(s) ({deck.get('own_normal_area_fraction', 0.0) * 100:.2g} % of the area, e.g. near "
+                                f"x = {where[0]:.0f}, y = {where[1]:.0f}, z = {where[2]:.0f} mm) sit where the surface turns more tightly than "
+                                "the laminate is thick; they are expanded straight through the thickness so the shell does not fold "
+                                "there, which makes the model locally a little stiffer.")
     if summary["equilibrium_error"] is not None and summary["equilibrium_error"] > 1e-3:
         summary["notes"].append(f"The support reactions differ from the applied loads by {summary['equilibrium_error'] * 100:.2f} %.")
     big = summary["max_displacement"] > 0.2 * float(np.linalg.norm(points.max(0) - points.min(0)))

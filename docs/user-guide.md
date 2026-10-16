@@ -92,9 +92,10 @@ guide above each page:
   count, checkMesh quality, layer coverage per patch and plain-language findings.
 * **Refinement boxes**: the automatic boxes (around the vehicle, the wake, the wheels, the
   underbody, …) can be switched off or given another level. *Add box* adds one of your own:
-  click it in the 3D view and drag the white handle on any face, or drag the label of an
-  *x / y / z from / to* field left and right (Shift: faster, Alt: finer) — the box follows at
-  once. The mirror button adds a copy mirrored across a plane normal to x, y or z at a
+  click it in the 3D view and drag the arrow on any face — arrows point the way their face
+  moves and are coloured like the axes in the corner (x red, y green, z blue); a dashed line
+  shows the axis while you drag — or drag the label of an *x / y / z from / to* field left and
+  right (Shift: faster, Alt: finer). The box follows at once. The mirror button adds a copy mirrored across a plane normal to x, y or z at a
   position you choose. Where boxes overlap, the finer level applies; the list says so for
   your boxes, and says when a box lies entirely inside one at least as fine (it then changes
   nothing). The cell estimate counts overlapping boxes once.
@@ -175,7 +176,7 @@ the newest run.
   exactly, and inside the change fades out smoothly towards the zone's edges. Zones are
   drawn on the parts as imported — for an aero element, before its angle and height are
   applied — because that is where they act. Edit a zone's box like a refinement box: drag
-  the handles on its faces in the 3D view, or drag a field's label; mirror a copy across a
+  the arrows on its faces in the 3D view, or drag a field's label; mirror a copy across a
   plane. Each zone says how much of the surface it covers, or that its box misses the part
   (then nothing would change), and where two zones overlap their changes add up.
   *Where it can change* colours the surface by how free it is; *Trial change* moves the
@@ -232,7 +233,7 @@ computes deflection and stresses; every ply or sheet is checked for failure.
   surface holds it like a flange; one that only touches a line of it clamps that line.
   Presets place both ends, two mounts under the element, one central mount, or the rear
   edge. Each support shows how much of the surface it holds. Edit a box by dragging the
-  handles of the selected support in the 3D view, or the labels of its *from / to* fields.
+  arrows of the selected support in the 3D view, or the labels of its *from / to* fields.
 * **Pass criterion**: the required reserve factor — how many times larger all loads could be
   before the first ply or the material fails (Tsai-Wu and maximum stress for plies, yield
   for metals and plastics).

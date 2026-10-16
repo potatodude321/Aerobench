@@ -34,10 +34,13 @@ back" or "just covering the trailing edge".
    the user where a finer box takes over and when a box lies entirely inside one at least as
    fine (it then changes nothing).
 3. **Editing boxes in the 3D view.** A box editor overlays the viewer: clicking a box selects
-   it; the selected box shows a handle on each face; dragging a handle moves that face along
+   it; the selected box shows an arrow on each face, pointing the way the face moves and
+   coloured like the axis in the orientation triad (x red, y green, z blue), the same size on
+   screen at any zoom, and faint where the part hides it; dragging an arrow moves that face along
    its axis (the closest point of the axis line to the mouse ray), in whole millimetres, never
    past the opposite face; symmetric zones keep their symmetry. The change is shown at once
-   and stored when the handle is released. Number fields for box faces have draggable labels
+   and stored when the arrow is released; a dashed line along the axis shows the direction of
+   travel while dragging. Number fields for box faces have draggable labels
    (Shift faster, Alt finer) with the same live preview. Boxes and zones can be mirrored
    across a plane normal to x, y or z at a chosen position (a copy).
    Used for your own refinement boxes (automatic ones keep their geometry; their level and

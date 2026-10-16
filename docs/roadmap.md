@@ -45,8 +45,8 @@ tested and documented; later items are ordered by engineering value.
 * Shape zones shown on the parts as imported (where they act), with per-zone coverage, trial
   change diagnostics and aero element presets (ADR-0013).
 * Bodies added from the same CAD model as parts or as modelled refinement volumes; boxes
-  edited by dragging face handles in the 3D view or field labels, mirrored copies, overlap
-  notes and an overlap-aware cell estimate (ADR-0014).
+  edited by dragging the arrows on their faces in the 3D view or field labels, mirrored
+  copies, overlap notes and an overlap-aware cell estimate (ADR-0014).
 
 ## Next (0.3)
 

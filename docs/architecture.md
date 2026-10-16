@@ -97,7 +97,7 @@ Every user action follows the same path (BUILD_SPEC "pipeline"):
   with structured errors (`Diagnostic`); a WebSocket event stream for job progress and log
   tails; a three.js viewer for geometry, overlays (tunnel, refinement boxes, modelled
   refinement volumes, wheels) and ParaView extracts; a box editor on top of it (click a
-  box, drag the handle on a face) for refinement boxes, shape zones and structural supports,
+  box, drag the arrow on a face) for refinement boxes, shape zones and structural supports,
   and number fields whose labels can be dragged (ADR-0014).
 
 ## Why ParaView runs out of process

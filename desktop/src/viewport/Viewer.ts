@@ -10,6 +10,8 @@ import type { Abg } from "./abg";
 import { LEVEL_COLORS, PART_COLORS, WHEEL_COLOR, sampleColormap } from "./colormaps";
 
 export const VIEWPORT_BG = 0x111418;
+/** Colours of the x, y and z axes (orientation triad, box handles). */
+export const AXIS_COLORS = [0xd98282, 0x86bf98, 0x8db7e0];
 
 export interface CameraState {
   position: [number, number, number];
@@ -70,6 +72,8 @@ export class Viewer {
   private ro: ResizeObserver;
   private lastCamEmit = 0;
   onCameraChange?: (c: CameraState) => void;
+  /** Called before each frame is drawn (e.g. to keep handles a constant size on screen). */
+  readonly beforeRender = new Set<() => void>();
   private suppressEmit = false;
   /** One material per vehicle part (all parts share one indexed geometry). */
   parts: { name: string; material: THREE.MeshStandardMaterial }[] = [];
@@ -156,6 +160,7 @@ export class Viewer {
     r.setViewport(0, 0, w, h);
     r.setScissorTest(false);
     r.clear();
+    for (const f of this.beforeRender) f();
     r.render(this.scene, this.camera);
     // orientation triad (bottom-left)
     const s = 90;
@@ -175,6 +180,14 @@ export class Viewer {
     this.dirty = true;
   }
 
+  /** Length in world units of one screen pixel at the point ``p`` (perspective view). */
+  worldPerPixel(p: THREE.Vector3): number {
+    const fwd = this.camera.getWorldDirection(new THREE.Vector3());
+    const depth = Math.max(p.clone().sub(this.camera.position).dot(fwd), this.camera.near);
+    const h = Math.max(1, this.host.clientHeight);
+    return (2 * depth * Math.tan((this.camera.fov * Math.PI) / 360)) / h;
+  }
+
   private buildTriad(): void {
     const mk = (dir: THREE.Vector3, color: number, label: string) => {
       const arrow = new THREE.ArrowHelper(dir, new THREE.Vector3(), 1.0, color, 0.28, 0.16);
@@ -184,9 +197,9 @@ export class Viewer {
       sp.scale.set(0.5, 0.5, 1);
       this.triadScene.add(sp);
     };
-    mk(new THREE.Vector3(1, 0, 0), 0xd98282, "x");
-    mk(new THREE.Vector3(0, 1, 0), 0x86bf98, "y");
-    mk(new THREE.Vector3(0, 0, 1), 0x8db7e0, "z");
+    mk(new THREE.Vector3(1, 0, 0), AXIS_COLORS[0], "x");
+    mk(new THREE.Vector3(0, 1, 0), AXIS_COLORS[1], "y");
+    mk(new THREE.Vector3(0, 0, 1), AXIS_COLORS[2], "z");
   }
 
   /** A text label; the canvas widens to fit long text (``userData.aspect`` = width / height). */

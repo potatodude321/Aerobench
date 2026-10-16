@@ -118,7 +118,7 @@ def register(router: APIRouter) -> None:
     def parameters_preview(pid: str, body: ParamPreviewBody, e: EngineState = Depends(engine)):
         p = e.projects.get(pid)
         defs = None if body.parameters is None else svc.parse_parameters(body.parameters)
-        header, blob = zsvc.morph_preview(p, p.config, body.values, defs, body.check)
+        header, blob = zsvc.morph_preview(p, p.config, body.values, defs, body.check, posed=False)
         return Response(pack(header, blob), media_type="application/octet-stream")
 
     # ---------------------------------------------------------------- shape zones
@@ -146,7 +146,7 @@ def register(router: APIRouter) -> None:
     def zones_preview(pid: str, body: ZonePreviewBody, e: EngineState = Depends(engine)):
         p = e.projects.get(pid)
         defs = zsvc.parameters_with_zones(p, body.zones) if body.zones is not None else None
-        header, blob = zsvc.morph_preview(p, p.config, body.values, defs, body.check)
+        header, blob = zsvc.morph_preview(p, p.config, body.values, defs, body.check, posed=False)
         return Response(pack(header, blob), media_type="application/octet-stream")
 
     @router.get("/studies/{sid}/designs/{design_id}/morph.abg")

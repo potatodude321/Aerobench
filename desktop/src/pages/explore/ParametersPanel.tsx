@@ -57,7 +57,8 @@ export function ParametersPanel() {
 
   const onViewer = (v: Viewer) => {
     viewer.current = v;
-    api.binary(`/api/p/${pid()}/geometry/preview.abg`).then((buf) => {
+    // as imported: parameters (boxes, handles) are defined on the parts before they are posed
+    api.binary(`/api/p/${pid()}/geometry/preview.abg?posed=false`).then((buf) => {
       v.setGeometry(decodeAbg(buf), { colorByPart: true });
       v.view("iso");
       framed.current = true;

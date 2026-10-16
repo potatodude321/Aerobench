@@ -64,11 +64,16 @@ export function MorphControls({
       <div className="ab-float" style={{ ...statsPos, padding: "8px 10px" }}>
         <Stack gap={2}>
           <Text size="xs">
-            {fmt(st.moved_area_pct, 1)} % of the surface changes
+            {fmt(st.moved_area_pct, 1)} % of the surface moves, by up to {fmt(st.max_movement_mm, 1)} mm
           </Text>
           <Text size="xs" c="dimmed">
-            Up to {fmt(st.max_outward_mm, 1)} mm outwards and {fmt(st.max_inward_mm, 1)} mm inwards
+            Shape: up to {fmt(st.max_outward_mm, 1)} mm outwards and {fmt(st.max_inward_mm, 1)} mm inwards
           </Text>
+          {(header.notes || []).map((n: string, i: number) => (
+            <Text key={i} size="xs" c="yellow">
+              {n}
+            </Text>
+          ))}
           {chk && chk.valid === false && (
             <Alert color="red" p={6} mt={4} title="Not a valid shape">
               {chk.errors.map((e: any, i: number) => (

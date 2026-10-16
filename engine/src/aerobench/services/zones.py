@@ -23,7 +23,7 @@ from ..domain.exploration import GeometryParameter, ShapeZone, ZoneDef
 from ..domain.geometry import ComponentRole
 from ..domain.project import ProjectConfig
 from ..geometry.deform import affected_component_ids, apply_parameters, check_deformation, component_vertex_masks, parameter_values_complete, zone_window
-from ..geometry.pose import posed_components
+from ..geometry.pose import component_surface, ground_z, posed_components
 from ..geometry.trisurface import TriSurface
 from ..project.db import dec
 from ..project.store import Project
@@ -57,9 +57,46 @@ def body_extent(project: Project, cfg: Optional[ProjectConfig] = None) -> dict[s
     return {"lo": lo, "hi": hi, "half_width": half_width, "centreline_y": yc, "surface": cfd}
 
 
+def _element_presets(e: dict[str, Any]) -> list[dict[str, Any]]:
+    """Typical zones of a wing or flap (chord along x, span along y): boxes from its extent.
+
+    The boxes reach well past the element above, below, at its ends and beyond its leading and
+    trailing edges (farther than the fade-out), so upper and lower surfaces move together and
+    the edges move fully; the change fades out only towards the inside of the chord."""
+    lo, hi, yc, hw = e["lo"], e["hi"], e["centreline_y"], e["half_width"]
+    C, H = float(hi[0] - lo[0]), float(hi[2] - lo[2])
+    blend = round(0.15 * C, 3)
+    m = 0.05 * max(C, H) + blend
+    out = m / C  # beyond an edge, in chords
+    ylo, yhi = yc - hw - m, yc + hw + m
+    mm = lambda f: float(max(2, round(f * C * 1000)))  # noqa: E731 - a share of the chord, in whole mm
+
+    def box(x0: float, x1: float, y0: float = ylo, y1: float = yhi) -> dict:
+        return {"box_min": [round(lo[0] + x0 * C, 4), round(y0, 4), round(lo[2] - m, 4)],
+                "box_max": [round(lo[0] + x1 * C, 4), round(y1, 4), round(hi[2] + m, 4)]}
+
+    tip = 0.25 * hw
+    return [
+        {"preset": "leading_edge", "name": "Leading edge", "description": "Front of the element: droop or raise the nose (camber at the front).",
+         **box(-out, 0.35), "blend": blend, "moves": [{"direction": "z", "max_mm": mm(0.02), "segments": 1}]},
+        {"preset": "trailing_edge", "name": "Trailing edge", "description": "Rear of the element: flap-like camber, Gurney-like lip height.",
+         **box(0.6, 1 + out), "blend": blend, "moves": [{"direction": "z", "max_mm": mm(0.03), "segments": 1}]},
+        {"preset": "camber", "name": "Mid-chord camber", "description": "Middle of the chord: more or less curvature.",
+         **box(0.2, 0.8), "blend": blend, "moves": [{"direction": "z", "max_mm": mm(0.015), "segments": 1}]},
+        {"preset": "chord", "name": "Chord length", "description": "Trailing edge moved fore or aft: a longer or shorter element.",
+         **box(0.7, 1 + out), "blend": blend, "moves": [{"direction": "x", "max_mm": mm(0.04), "segments": 1}]},
+        {"preset": "tips", "name": "Tips (twist)", "description": "Outer ends of the span, both sides: wash-in or wash-out.",
+         **box(-out, 1 + out, yc + hw - tip, yhi), "blend": round(0.5 * tip, 3), "moves": [{"direction": "z", "max_mm": mm(0.03), "segments": 2}]},
+        {"preset": "custom", "name": "Custom zone", "description": "A box you place yourself.",
+         **box(0.3, 0.7), "blend": blend, "moves": [{"direction": "z", "max_mm": mm(0.015), "segments": 1}]},
+    ]
+
+
 def presets(project: Project) -> list[dict[str, Any]]:
-    """Typical zones placed on this vehicle (boxes from its extent)."""
+    """Typical zones placed on this vehicle or element (boxes from its extent, unposed frame)."""
     e = body_extent(project)
+    if project.config.application == "aero_element":
+        return _element_presets(e)
     lo, hi, yc, hw = e["lo"], e["hi"], e["centreline_y"], e["half_width"]
     L, H = float(hi[0] - lo[0]), float(hi[2] - lo[2])
     m = 0.05 * max(L, H)  # margin beyond the surface so the box faces are clear of it
@@ -174,6 +211,20 @@ def parameters_with_zones(project: Project, zones: list[dict[str, Any]]) -> list
 # ---------------------------------------------------------------------------- previews
 
 
+def _display_parts(surface: TriSurface, cfg: ProjectConfig, posed: bool, vehicle=None) -> tuple[dict[str, TriSurface], Optional[float]]:
+    """The parts as the viewport shows them: posed as in the tunnel, or in the frame shape zones
+    and parameters are defined in (the part as imported; an element before its angle and height)."""
+    vehicle = vehicle or cfg.vehicle
+    if posed:
+        parts, z0, _ = posed_components(surface, cfg.geometry.components, vehicle, cfg.tunnel.contact_patch_fraction)
+        return parts, z0
+    parts = {c.id: component_surface(surface, c) for c in cfg.geometry.components}
+    if cfg.application == "aero_element":
+        return parts, None  # the ground is only defined once the element is placed
+    z0, _ = ground_z(vehicle, surface, cfg.tunnel.contact_patch_fraction)
+    return parts, z0
+
+
 def _vertex_normals(s: TriSurface) -> np.ndarray:
     """Area-weighted vertex normals, oriented outwards for closed parts (by signed volume)."""
     tri = s.points[s.faces]
@@ -217,7 +268,7 @@ def _encode(parts_base: dict[str, TriSurface], scalars: dict[str, np.ndarray], v
 
 
 def morph_preview(project: Project, cfg: ProjectConfig, values: dict[str, float], defs: Optional[list[GeometryParameter]] = None,
-                  check: bool = True, max_faces: int = 400_000) -> tuple[dict, bytes]:
+                  check: bool = True, max_faces: int = 400_000, posed: bool = True) -> tuple[dict, bytes]:
     """The posed baseline surface with each vertex's displacement for ``values``.
 
     positions: baseline; vectors: displacement (m) — the deformed shape is positions +
@@ -233,8 +284,8 @@ def morph_preview(project: Project, cfg: ProjectConfig, values: dict[str, float]
     else:
         chk = {"valid": None, "errors": [], "warnings": [], "stats": {}}
     moved = cfg.vehicle.model_copy(update={"wheels": res.wheels})
-    base, z0b, _ = posed_components(cfd, cfg.geometry.components, cfg.vehicle, cfg.tunnel.contact_patch_fraction)
-    dfm, z0, _ = posed_components(res.surface, cfg.geometry.components, moved, cfg.tunnel.contact_patch_fraction)
+    base, _ = _display_parts(cfd, cfg, posed)
+    dfm, z0 = _display_parts(res.surface, cfg, posed, vehicle=moved)
     scal, vecs = {}, {}
     area_all = area_moved = 0.0
     for cid, b in base.items():
@@ -248,20 +299,33 @@ def morph_preview(project: Project, cfg: ProjectConfig, values: dict[str, float]
             area_moved += float(fa[mv].sum())
     allv = np.concatenate(list(scal.values())) if scal else np.zeros(1)
     mags = np.concatenate([np.linalg.norm(v, axis=1) for v in vecs.values()]) if vecs else np.zeros(1)
-    meta = {"ground_z": z0, "scalar_name": "Surface movement (+ outwards)", "scalar_units": "mm", "check": chk,
+    requested = {k: v for k, v in full.items() if any(d.id == k and abs(v - d.baseline) > 1e-12 for d in defs)}
+    notes = []
+    if requested and mags.max() < 1e-4:
+        notes.append("Nothing moves: no part of the surface lies inside the zones (or boxes) of the variables you changed. "
+                     "Check where their boxes are against the part.")
+    elif mags.max() >= 1e-4 and max(float(allv.max()), float(-allv.min())) < 0.2 * float(mags.max() * 1000.0):
+        notes.append("The surface moves mostly along itself (for example a fore/aft change of a flat roof), so the shape hardly changes.")
+    meta = {"ground_z": z0, "scalar_name": "Surface movement (+ outwards)", "scalar_units": "mm", "check": chk, "posed": posed,
             "stats": {"max_movement_mm": float(mags.max() * 1000.0), "max_outward_mm": float(allv.max()), "max_inward_mm": float(-allv.min()),
                       "moved_area_pct": 100.0 * area_moved / area_all if area_all else 0.0},
-            "values": full}
+            "notes": notes, "values": full}
     return _encode(base, scal, vecs, meta, max_faces)
 
 
-def freedom_preview(project: Project, zones: Optional[list[dict[str, Any]]] = None, max_faces: int = 400_000) -> tuple[dict, bytes]:
-    """Where the zones allow change: per vertex, the strongest zone weight (0–100 %)."""
+def freedom_preview(project: Project, zones: Optional[list[dict[str, Any]]] = None, max_faces: int = 400_000,
+                    posed: bool = False) -> tuple[dict, bytes]:
+    """Where the zones allow change: per vertex, the strongest zone weight (0–100 %), and how
+    much of the surface each zone covers (a box that misses the part covers nothing)."""
     cfg = project.config
     zs = [ShapeZone.model_validate(z) for z in zones] if zones is not None else cfg.zones
     cfd = project.cfd_surface(cfg=cfg)
     masks = component_vertex_masks(cfd, cfg.geometry.components)
     w = np.zeros(cfd.n_points)
+    tri = cfd.points[cfd.faces]
+    fa = 0.5 * np.linalg.norm(np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]), axis=1)
+    total = float(fa.sum()) or 1.0
+    coverage = []
     for z in zs:
         if not z.enabled:
             continue
@@ -276,14 +340,19 @@ def freedom_preview(project: Project, zones: Optional[list[dict[str, Any]]] = No
             if cid not in aff:
                 keep |= m
         sel &= ~keep  # vertices shared with untouched parts are held (as in the deformation)
+        zw = np.zeros(cfd.n_points)
         if sel.any():
-            w[sel] = np.maximum(w[sel], zone_window(cfd.points[sel], np.asarray(z.box_min), np.asarray(z.box_max), z.blend))
+            zw[sel] = zone_window(cfd.points[sel], np.asarray(z.box_min), np.asarray(z.box_max), z.blend)
+            w = np.maximum(w, zw)
+        covered = float(fa[(zw[cfd.faces] > 1e-6).any(axis=1)].sum())
+        coverage.append({"id": z.id, "name": z.name, "area_pct": 100.0 * covered / total})
     field = TriSurface(np.repeat(w[:, None], 3, axis=1), cfd.faces, cfd.regions, cfd.region_names)
-    base, z0, _ = posed_components(cfd, cfg.geometry.components, cfg.vehicle, cfg.tunnel.contact_patch_fraction)
+    base, z0 = _display_parts(cfd, cfg, posed)
     flat = cfg.vehicle.model_copy(update={"rake_deg": 0.0, "ride_height_offset": 0.0})
-    wparts, _, _ = posed_components(field, cfg.geometry.components, flat, cfg.tunnel.contact_patch_fraction)
+    wparts, _ = _display_parts(field, cfg, posed, vehicle=flat)
     scal = {cid: wparts[cid].points[:, 0] * 100.0 for cid in base}
-    return _encode(base, scal, None, {"ground_z": z0, "scalar_name": "Shape freedom", "scalar_units": "%"}, max_faces)
+    return _encode(base, scal, None, {"ground_z": z0, "scalar_name": "Shape freedom", "scalar_units": "%", "coverage": coverage,
+                                      "posed": posed}, max_faces)
 
 
 def design_morph(project: Project, study_id: str, design_id: str) -> tuple[dict, bytes]:

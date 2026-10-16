@@ -142,3 +142,46 @@ def test_previews(proj):
         zsvc.set_zones(p, [_zone(p, components=["nope"])])
     assert e.value.diagnostic.code == "zones.component"
     assert ShapeZone.model_validate(_zone(p)).moves[0].direction == "z"
+
+
+def test_zone_that_misses_the_part_is_reported(proj):
+    pr = {p["preset"]: p for p in zsvc.presets(proj)}["rear_deck"]
+    good = {"id": "deck", "name": "Deck", "preset": "rear_deck", "box_min": pr["box_min"], "box_max": pr["box_max"], "blend": pr["blend"],
+            "moves": [{"direction": "z", "max_mm": 20, "segments": 1}]}
+    lo, hi = np.asarray(pr["box_min"]), np.asarray(pr["box_max"])
+    away = {**good, "id": "away", "name": "Away", "box_min": (lo + [0, 0, 5]).tolist(), "box_max": (hi + [0, 0, 5]).tolist()}
+    header, _ = zsvc.freedom_preview(proj, [good, away])
+    cov = {c["id"]: c["area_pct"] for c in header["coverage"]}
+    assert cov["deck"] > 1 and cov["away"] == 0
+    defs = zsvc.parameters_with_zones(proj, [away])
+    header, _ = zsvc.morph_preview(proj, proj.config, {"away_z": 20.0}, defs, check=False, posed=False)
+    assert header["stats"]["max_movement_mm"] == 0 and "Nothing moves" in header["notes"][0]
+    defs = zsvc.parameters_with_zones(proj, [good])
+    header, _ = zsvc.morph_preview(proj, proj.config, {"deck_z": 20.0}, defs, check=False, posed=False)
+    assert header["stats"]["max_movement_mm"] == pytest.approx(20.0, rel=0.01) and not header["notes"]
+
+
+def test_element_zones_are_drawn_on_the_element_as_imported(tmp_path, monkeypatch):
+    from aerobench.domain.project import ProjectConfig
+    from aerobench.domain.templates import apply_template
+    from aerobench.geometry.fixtures import wing
+    from aerobench.services import element as el
+
+    monkeypatch.setenv("AEROBENCH_CONFIG_DIR", str(tmp_path / "cfg"))
+    write_stl(tmp_path / "wing.stl", wing(0.3, 1.2, (0.0, 0.0, 0.5)))
+    p = Project.create(tmp_path / "w", "w", apply_template(ProjectConfig(), "aero_element"))
+    geo.import_geometry(p, tmp_path / "wing.stl")
+    el.apply_element_setup(p, environment="ground_effect", ground_clearance=0.05, angle_deg=8.0)
+    pres = zsvc.presets(p)
+    assert {x["preset"] for x in pres} >= {"leading_edge", "trailing_edge", "camber", "tips"}
+    zs = [{"id": x["preset"], "name": x["name"], "preset": x["preset"], "box_min": x["box_min"], "box_max": x["box_max"],
+           "blend": x["blend"], "moves": x["moves"]} for x in pres]
+    header, blob = zsvc.freedom_preview(p, zs)
+    assert all(c["area_pct"] > 1 for c in header["coverage"])  # every typical zone covers part of the element
+    assert header["ground_z"] is None
+    # unposed: the payload's points are the element as imported (no angle, no height)
+    pts = _block(header, blob, "positions").reshape(-1, 3)
+    cfd = p.cfd_surface()
+    assert pts.min(0) == pytest.approx(cfd.points.min(0), abs=1e-5) and pts.max(0) == pytest.approx(cfd.points.max(0), abs=1e-5)
+    posed, _ = geo.preview_payload(p)
+    assert posed["ground_z"] is not None

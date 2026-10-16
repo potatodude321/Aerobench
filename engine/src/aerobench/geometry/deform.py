@@ -554,14 +554,22 @@ def check_deformation(
     with np.errstate(divide="ignore", invalid="ignore"):
         cosang = (n0 * n1).sum(1) / (a0 * a1)
     cosang = np.nan_to_num(cosang, nan=1.0)
-    folded = int((cosang < math.cos(math.radians(fold_angle_deg))).sum())
-    collapsed = int(((a1 < 1e-6 * np.maximum(a0, 1e-30)) & (a0 > 0)).sum())
     q0, q1 = _tri_quality(t0), _tri_quality(t1)
+    turned = cosang < math.cos(math.radians(fold_angle_deg))
+    # a sliver of the tessellation (a needle in a flat cap) turns over under a small shear without
+    # the shape folding: reported, but not as a fold of the surface
+    sliver = q0 < 0.05
+    folded = int((turned & ~sliver).sum())
+    slivers_turned = int((turned & sliver).sum())
+    collapsed = int(((a1 < 1e-6 * np.maximum(a0, 1e-30)) & (a0 > 0)).sum())
     degraded = int(((q1 < quality_drop * q0) & (q0 > 0.05)).sum())
-    chk.stats.update({"folded_faces": folded, "collapsed_faces": collapsed, "degraded_faces": degraded,
+    chk.stats.update({"folded_faces": folded, "slivers_turned": slivers_turned, "collapsed_faces": collapsed, "degraded_faces": degraded,
                       "min_quality_moved": float(q1.min()) if len(q1) else None})
     if folded:
         chk.errors.append({"code": "geometry.folded", "message": f"{folded} triangle(s) flipped orientation: the deformation folds the surface."})
+    if slivers_turned:
+        chk.warnings.append({"code": "geometry.slivers_turned", "message": f"{slivers_turned} sliver triangle(s) of the tessellation turned over "
+                             "(needle-shaped triangles in a flat area); the shape itself does not fold."})
     if collapsed:
         chk.errors.append({"code": "geometry.collapsed", "message": f"{collapsed} triangle(s) collapsed to zero area."})
     if degraded:

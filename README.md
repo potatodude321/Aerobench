@@ -16,17 +16,18 @@ feature gating or telemetry in the code base.
 
 | Area | Capabilities |
 |---|---|
-| Geometry | STL (ASCII multi-solid / binary), OBJ, PLY, STEP, IGES, BREP (OpenCASCADE tessellation, one region per solid); unit and orientation detection; diagnostics (open edges, non-manifold, inverted normals, islands); repair pipeline; automatic component and wheel identification; frontal area; ride height and rake |
+| Geometry | STL (ASCII multi-solid / binary), OBJ, PLY, STEP, IGES, BREP (OpenCASCADE tessellation, one region per solid); unit and orientation detection; diagnostics (open edges, non-manifold, inverted normals, islands); repair pipeline; automatic component and wheel identification; more bodies from the same CAD model added in place (as parts, or as modelled refinement volumes); frontal area; ride height and rake |
 | Wind tunnel | Domain presets in vehicle lengths with blockage ratio; moving or stationary ground; rotating wheels (rotating-wall velocity); yaw by rotated inflow with free-stream far field; half model; contact-patch treatment |
-| Mesh | Automatic snappyHexMesh plan (surface, wake, underbody, wheel and front refinement regions); boundary layers sized for a target y+; parallel meshing; checkMesh and layer-coverage reporting with engineering findings |
+| Mesh | Automatic snappyHexMesh plan (surface, wake, underbody, wheel and front refinement regions); your own boxes edited by dragging in the 3D view, mirrored copies, modelled refinement volumes, overlap-aware estimate; boundary layers sized for a target y+; parallel meshing; checkMesh and layer-coverage reporting with engineering findings |
 | Physics & numerics | Steady incompressible RANS (k-ω SST, Spalart–Allmaras, realizable k-ε); versioned numerics presets (robust → high fidelity) with first-order start; derived quantities (Re, y+, inlet turbulence) shown before running |
-| Execution | Native Windows OpenFOAM v2606 (MinGW + MS-MPI), WSL2, Linux; detached job runner (closing the app never kills a run); crash-safe resume; exact commands recorded |
+| Execution | Native Windows OpenFOAM v2606 (MinGW + MS-MPI, one parallel job at a time), Linux; detached job runner (closing the app never kills a run); crash-safe resume; exact commands recorded |
 | Results | Cd, Cl, axle loads, aero balance, side force, moments with explicit sign conventions; per-component forces; drag decomposition; convergence assessment (never "converged" unless the criteria pass) |
 | Visualisation | ParaView 6.2 as the processing engine: Cp/y+/wall-shear maps, planes, streamlines, Q-criterion — rendered in the app; one click to open the case in ParaView; generated pvpython scripts |
 | Compare | Deltas and percentages where meaningful, validity warnings (different reference values, unconverged runs), side-by-side 3D views with synced cameras |
 | Studies | One-factor sweeps, full factorial, Latin hypercube, tables; yaw sweeps on a single mesh; mesh-sensitivity studies with grid convergence index |
 | Optimisation | Bayesian optimisation (GP, constrained EI), NSGA-II (multi-objective), Nelder–Mead, space-filling; constraints absolute or relative to baseline; multi-condition objectives; failures as data; checkpoint/resume |
-| Parameterisation | Rigid moves, FFD and RBF morphs of chosen components with validity checks (folds, self-intersection, enclosure, ground contact) |
+| Parameterisation | Shape zones (boxes where the optimiser may reshape, with vehicle and aero-element presets, coverage and movement heat maps); rigid moves, FFD and RBF morphs of chosen components with validity checks (folds, self-intersection, enclosure, ground contact) |
+| Structural check | Aero elements: loads from a run on a shell model remeshed from the same surface, sheet and composite sections, CalculiX, ply failure (Tsai-Wu, maximum stress), deflection and reserve-factor maps |
 | Reports | Self-contained HTML (charts, ParaView images, provenance), CSV, PDF export |
 
 ## Repository layout

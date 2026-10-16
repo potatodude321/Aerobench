@@ -1,6 +1,6 @@
 # ADR-0012 — Structural check of aero elements with CalculiX
 
-Status: accepted (0.2.0)
+Status: accepted (0.2.0); items 3 and 6 revised in 0.2.1
 
 ## Context
 
@@ -24,16 +24,26 @@ own.
    `ccx` is used. It was chosen for its composite shell sections with per-ply materials and
    orientations, a Windows build that runs from a folder without installation, and its size
    (55 MB with its DLLs).
-3. **Same surface.** The structural mesh is the CFD surface of the analysed parts, posed
-   exactly as in the run. CAD tessellations are long slivers; the quadratic S6 shell
-   tolerates elongated elements (a cantilever of 125:1 slivers deflects within 10 % of beam
-   theory) but must be short along the direction the part bends. The surface is therefore
-   divided without changing its shape (`structures/refine.py`): edges longer than the target
-   size are divided into equal segments and each face (or a flat quad of two faces across
-   their longest edge) is re-triangulated in its own plane from its divided boundary;
-   Delaunay flips only where the surface moves less than a CAD tolerance. The target comes
-   from the element budget (default 30 000). Meshing anew (gmsh was tried) was rejected: it
-   moves the surface, loses area at sharp edges, takes 30 s and would add a GPL program.
+3. **Remeshed surface (0.2.1).** The structural mesh is the CFD surface of the analysed parts,
+   posed exactly as in the run, remeshed for shells (`structures/remesh.py`): the incremental
+   isotropic remeshing of Botsch & Kobbelt (split edges above 4/3 of the local size, collapse
+   below 4/5 with the link condition and no turned-over or over-long faces, valence flips,
+   tangential relaxation), vectorised over independent sets of operations, with every new or
+   moved vertex projected onto the *original* surface (a uniform grid of its triangles, so the
+   closest point is found also among long CAD strips). Sharp edges (above 40°, unless they
+   only form fragments shorter than the element size, as tessellation noise does), open
+   boundaries and part borders are kept: their vertices slide along them only, junctions stay
+   put. The size follows the curvature (facets meet at about 15°, so CalculiX's 20° normal
+   groups stay smooth on curved skins) down to a quarter of the base size, and the size field
+   is scaled to the element budget (default 30 000).
+   *Why the change*: 0.2.0 kept the CFD triangles and only divided long edges. On production
+   meshes (a 280 000-triangle wing made for the flow: slivers of 0.02 mm next to 3 mm
+   triangles where CAD faces meet) CalculiX's facet normals cross within a 1.1 mm laminate
+   and the expansion folds; 0.2.0 refused such parts ("thicker than the tightest curves").
+   Remeshed, the same wing has 2 elements that would fold instead of 134 (and 2442 for the
+   300 000-element version a user ran), and solves. Inputs above 600 000 triangles are
+   coarsened first (VTK quadric decimation); the remeshing takes about 30 s for 280 000
+   triangles to 30 000 and 110 s to 260 000.
 4. **Loads.** Per CFD wall face F = ρ(p − p_ref)S − ρτ_w|S| (OpenFOAM's `forces`
    convention, verified against it). The wall traction is sampled over every structural
    triangle (an n × n subdivision chosen from the size ratio) taking the nearest flow face on
@@ -51,12 +61,27 @@ own.
    wide) from the section's 0° direction projected onto the surface. Skin model: the shell
    lies inside the outer surface (OFFSET 0.5). Plate model: only the upper or lower faces
    carry a plate inside the part.
-6. **Expansion check before solving.** CalculiX expands shells into 3D wedges along nodal
-   normals; a thick section on a tight curve folds over ("nonpositive jacobian").
-   `structures/expansion.py` reproduces its normal grouping (gen3dnor: 20° groups in element
-   order) and evaluates the wedge Jacobian on a grid denser than the integration points. A
-   section that does not fit inside is centred on the surface (OFFSET 0) with a note; one that
-   does not fit even centred is refused with the place named.
+6. **Expansion plan before solving (0.2.1).** CalculiX expands shells into 3D wedges along
+   nodal normals; a wedge on a curve tighter than the laminate is thick, or next to a kink,
+   folds over ("nonpositive jacobian"). `structures/expansion.py` reproduces its normal
+   grouping (gen3dnor: in element order, elements within 20° *with the same thickness and
+   offset* share their mean normal) and evaluates the wedge Jacobian on a grid denser than
+   the integration points. The section stays inside the outer surface (OFFSET 0.5); an
+   element whose wedge would fold is *isolated*: it is written with an offset 1 % of the
+   thickness different, so by CalculiX's own rule it no longer shares normals — it is
+   expanded straight along its facet normal (a prism, which cannot fold) and joined to its
+   neighbours by knots, locally a little stiffer. Isolated neighbours get different offsets
+   (a colouring, at most ten groups), and the check repeats on the elements whose shared
+   normals changed until nothing folds. The result reports how many elements and how much of
+   the area were isolated. A section is centred on the surface only when more than 10 % of
+   its area would fold, and refused only when more than 25 % of it must be isolated (the part
+   is then thick for its size everywhere; a shell model does not represent it).
+   Writing smooth normals with `*NORMAL` was tried first: CalculiX 2.21 does not expand
+   composite sections along user normals correctly (nonpositive Jacobians on a smooth tube,
+   segmentation faults with knots), so the plan works with the solver's own normals.
+   Separate pieces of the surface (bodies that share no nodes) are not joined in a shell
+   model (`*TIE` is not available for shells); each needs a support, and one without is named
+   before solving.
 7. **Supports.** Boxes (sphere, cylinder possible). A support that contains whole elements
    (a patch) holds translations only: the patch is clamped through those elements and the
    reaction totals stay exact. A support touching only a line or points clamps rotations too
@@ -80,7 +105,9 @@ own.
 
 * Unit tests compare CalculiX with beam theory for a sheet and a unidirectional laminate
   cantilever (deflection, failing ply and mode), check load mapping in both size regimes,
-  the expansion check, the ply order and orientations, patch/edge supports and self-weight.
+  the remeshing (shape, parts, orientation, sharp edges, budget, slivers), the expansion
+  plan (isolation, colouring, a CalculiX run with isolated elements), the ply order and
+  orientations, patch/edge supports, unsupported pieces and self-weight.
 * First-ply failure only (no progressive damage, buckling or fatigue), shells only (no
   inserts or bonded joints); stresses at supports and sharp corners are mesh dependent.
   These limits are stated in the user guide.

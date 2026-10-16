@@ -1,6 +1,6 @@
 # Roadmap
 
-Status as of version 0.2.0 (2026-10). Everything listed under "Delivered" is implemented,
+Status as of version 0.2.1 (2026-10). Everything listed under "Delivered" is implemented,
 tested and documented; later items are ordered by engineering value.
 
 ## Delivered (0.1.0)
@@ -34,6 +34,19 @@ tested and documented; later items are ordered by engineering value.
   soon as a run ends; no false "settings changed" states.
 * The setup updates an installation in place, keeping unchanged components (ADR-0011). WSL
   removed: the bundled Windows build is the supported path.
+
+## Delivered (0.2.1)
+
+* Structural mesh remeshed for shells from production and CAD meshes (feature-preserving,
+  curvature-adaptive, on the original surface); elements that would fold in CalculiX's
+  expansion are isolated instead of the part being refused (ADR-0012).
+* Optimisations on Windows run parallel designs one at a time (Microsoft MPI), which made
+  every design after the first fail (ADR-0015).
+* Shape zones shown on the parts as imported (where they act), with per-zone coverage, trial
+  change diagnostics and aero element presets (ADR-0013).
+* Bodies added from the same CAD model as parts or as modelled refinement volumes; boxes
+  edited by dragging face handles in the 3D view or field labels, mirrored copies, overlap
+  notes and an overlap-aware cell estimate (ADR-0014).
 
 ## Next (0.3)
 
@@ -78,3 +91,5 @@ tested and documented; later items are ordered by engineering value.
 * GCI is reported for studies that vary only the background cell size.
 * Linux: parallel runs require project paths without spaces (OpenFOAM restriction).
 * The structural check is linear static and shell-only with first-ply failure (ADR-0012).
+  Separate bodies are separate pieces in the shell model (CalculiX cannot tie shells): each
+  needs its own support.

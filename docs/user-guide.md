@@ -63,6 +63,17 @@ guide above each page:
 * **Components**: regions are grouped into components with roles (body, wheel, wing,
   mirror, …). Wheels are detected automatically (centre, radius, axis) and can be edited.
   Each component becomes a separate patch with its own forces.
+* **Add bodies from the same model**: more files exported from the same CAD model (a rear
+  wing, endplates, a splitter, …) are read with the same units, axes and origin as the
+  geometry already imported, so they sit exactly where they were modelled; nothing that was
+  there moves. Choose what they are:
+  * *Parts*: each file (or each named solid in it) becomes a component with the role you pick;
+    the flow sees it as a wall and its forces are reported;
+  * *Refinement zones*: each file must be a closed volume you modelled around a region of
+    interest (a wake, a wheel arch, the gap under a wing); the flow does not see it and the
+    mesh is refined everywhere inside it to the level you choose. It follows the vehicle's
+    ride height and rake, and appears with the refinement boxes on the Mesh page.
+  If the files were exported in other units, say so; otherwise *Same as the geometry* is right.
 * **Geometry parameters** (Studies → Geometry parameters): define rigid moves, FFD lattices
   or RBF handles on chosen components, preview the deformed shape coloured by displacement
   and check validity.
@@ -79,6 +90,14 @@ guide above each page:
   component and region; boundary layers designed for a target y+ (wall functions or resolved);
   the panel shows the estimated cell count and memory before meshing. After meshing: cell
   count, checkMesh quality, layer coverage per patch and plain-language findings.
+* **Refinement boxes**: the automatic boxes (around the vehicle, the wake, the wheels, the
+  underbody, …) can be switched off or given another level. *Add box* adds one of your own:
+  click it in the 3D view and drag the white handle on any face, or drag the label of an
+  *x / y / z from / to* field left and right (Shift: faster, Alt: finer) — the box follows at
+  once. The mirror button adds a copy mirrored across a plane normal to x, y or z at a
+  position you choose. Where boxes overlap, the finer level applies; the list says so for
+  your boxes, and says when a box lies entirely inside one at least as fine (it then changes
+  nothing). The cell estimate counts overlapping boxes once.
 * **Inspecting the generated mesh** (Mesh → *Generated mesh* in the 3D view): the real cell
   faces on the vehicle and the ground, optionally as a wireframe, with the refinement boxes
   and the tunnel outline as they were for that mesh. *Cut through the volume* (lengthwise,
@@ -142,19 +161,30 @@ the newest run.
     balance within 2 points; *Better efficiency* is offered when the vehicle makes downforce;
   * the search is Bayesian: today's shape first, a spread of designs, then designs chosen
     from what was learnt (about 4 × the number of variables, at most 30), several at once
-    when the cores allow.
+    when the cores allow — on Windows, where Microsoft MPI cannot run two parallel jobs side
+    by side, designs that use several cores run one after the other (each with all of them),
+    and a run that waits for another says so on the Run page.
   The optimisation is then an ordinary one: it can be paused, its designs inspected and the
   best applied to the project.
 * **Shape zones** (Optimise → Shape zones): boxes over the parts of the vehicle an
   optimisation may reshape — typical ones (front splitter, bonnet, roof tail, rear deck,
-  diffuser, boat tail, side skirts) or your own. Each zone moves its part of the surface up or
-  down, fore or aft, or wider or narrower, as a whole or in two or three sections, by at most
-  the distance you set; everything outside the zones keeps its imported shape exactly, and
-  inside the change fades out smoothly towards the zone's edges. *Where it can change*
-  colours the surface by how free it is; *Trial change* moves the zone's sliders and shows
-  the heat map of the movement (red outwards, blue inwards) with a slider that blends between
-  the baseline and the changed shape. *Optimise these* starts an optimisation with the
-  zones' variables, and each design in its table can be shown the same way.
+  diffuser, boat tail, side skirts; for an aero element: leading edge, trailing edge,
+  mid-chord camber, chord length, tips) or your own. Each zone moves its part of the surface
+  up or down, fore or aft, or wider or narrower, as a whole or in two or three sections, by
+  at most the distance you set; everything outside the zones keeps its imported shape
+  exactly, and inside the change fades out smoothly towards the zone's edges. Zones are
+  drawn on the parts as imported — for an aero element, before its angle and height are
+  applied — because that is where they act. Edit a zone's box like a refinement box: drag
+  the handles on its faces in the 3D view, or drag a field's label; mirror a copy across a
+  plane. Each zone says how much of the surface it covers, or that its box misses the part
+  (then nothing would change), and where two zones overlap their changes add up.
+  *Where it can change* colours the surface by how free it is; *Trial change* moves the
+  zone's sliders and shows the heat map of the movement (red outwards, blue inwards) with a
+  slider that blends between the baseline and the changed shape; it says how far the surface
+  moves, when nothing moves, and when a change mostly slides the surface along itself (a
+  fore/aft change of a flat roof hardly changes the shape). *Optimise these* starts an
+  optimisation with the zones' variables, and each design in its table can be shown the
+  same way. A failed design shows why, with a link to the output of the run.
 * **Optimise**: objectives (e.g. minimise Cd, or Cd and Cl together), constraints (absolute
   or relative to the baseline, e.g. "Cl must not increase by more than 0.02"), algorithm
   (Bayesian for one objective, NSGA-II for trade-offs, Nelder–Mead for local refinement,
@@ -174,9 +204,20 @@ computes deflection and stresses; every ply or sheet is checked for failure.
   force OpenFOAM integrated (normally a fraction of a percent).
 * **Model**: *Skin* — the whole outer surface is the shell, with the section's thickness
   inside it (hollow or foam-cored wings and flaps); *Plate* — only the upper or lower face
-  carries a flat plate under it (splitters, endplates, floors). A coarse CAD tessellation is
-  divided into smaller triangles on the surface itself (the shape does not change), up to
-  the element limit.
+  carries a flat plate under it (splitters, endplates, floors).
+* **Structural mesh**: the surface is remeshed for the shell model — triangles of about the
+  size the element limit allows, smaller where the surface curves tightly, well shaped
+  everywhere, with sharp edges and the borders between parts kept and every node on the
+  original surface. A production mesh made for the flow (fine, with slivers where CAD faces
+  meet) and a CAD export (long thin strips) both come out the same way. CalculiX expands
+  each shell triangle through the laminate thickness; where an element would still fold in
+  that expansion (a curve tighter than the laminate is thick), it is expanded straight
+  through the thickness along its own facet instead, joined to its neighbours, and the
+  result says how many elements and how much of the area that concerns (locally a little
+  stiffer). Only a section thicker than the part is curved over a quarter of its area is
+  refused: a shell model does not represent such a part. Parts that do not share nodes
+  (separate bodies) are separate pieces in the shell model: each needs a support, and the
+  check names one that has none before solving.
 * **Sections**: a sheet of one metal or plastic and its thickness, or a composite laminate:
   plies listed from the outer surface inwards, each with its material, thickness and angle
   from the 0° direction (along the span by default); *Mirror about the mid-plane* doubles a
@@ -190,7 +231,8 @@ computes deflection and stresses; every ply or sheet is checked for failure.
 * **Supports**: boxes where the part is bolted or bonded. A box that takes in a patch of the
   surface holds it like a flange; one that only touches a line of it clamps that line.
   Presets place both ends, two mounts under the element, one central mount, or the rear
-  edge. Each support shows how much of the surface it holds.
+  edge. Each support shows how much of the surface it holds. Edit a box by dragging the
+  handles of the selected support in the 3D view, or the labels of its *from / to* fields.
 * **Pass criterion**: the required reserve factor — how many times larger all loads could be
   before the first ply or the material fails (Tsai-Wu and maximum stress for plies, yield
   for metals and plastics).
@@ -233,6 +275,9 @@ reports.
 | The solver diverged | Use the Robust numerics preset; check mesh quality and layer collapse |
 | Parallel runs on Linux cannot use a folder with spaces | Save the project in a folder without spaces or run on one core |
 | CAD file, no CAD tessellation component | Install the CAD component or export STL from the CAD system |
-| Structural check: "thicker than the tightest curves of the part allow" | The laminate does not fit inside a sharp leading or trailing edge; use a thinner section, the plate model, or a less sharp edge |
+| Structural check: "thicker than the part is curved over N % of its area" | The section is thick for the size of the part almost everywhere (a shell model does not represent it); use a thinner section or the plate model. A few tight spots are handled by themselves and only reported |
+| Structural check: "a separate piece of the surface with no support" | That part shares no nodes with the rest (a separate body); add a support where it is attached, leave it out of the check, or join it to the rest in CAD |
+| A run says "Waiting for another parallel run on this computer to finish" | Windows (Microsoft MPI) runs one parallel job at a time; the run starts by itself when the other one ends |
+| Trial change: "Nothing moves" / a zone "misses the part" | The zone's box does not contain any of the surface of the chosen parts: move or enlarge it (zones are drawn on the part as imported) |
 | Structural check: the structure can move freely | The supports do not hold the part in every direction; add or enlarge a support |
 | Structural check: a support holds nothing | Move or enlarge its box so that it overlaps the part where it is attached |

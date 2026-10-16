@@ -77,11 +77,11 @@ Every user action follows the same path (BUILD_SPEC "pipeline"):
 | `geometry` | Surface IO, CAD tessellation, diagnostics, repair, components, frontal area, pose, deformation |
 | `meshing` | Domain sizing, refinement regions, boundary-layer design |
 | `execution` | Providers (native Windows, local POSIX, remote) and detection |
-| `jobs` | Job specs, runner, manager, worker |
+| `jobs` | Job specs, runner, manager, worker; the computer-wide MPI lock (one parallel job at a time where the MPI cannot share the computer: Microsoft MPI, ADR-0015) |
 | `results`, `monitoring` | Ingestion and convergence assessment |
 | `viz` | ParaView detection, sidecar client/server, presets, binary payloads |
 | `studies`, `optimisation` | Design space, DOE, design evaluation, driver, ask/tell optimisers, GP |
-| `structures` | Structural check of aero elements: shell mesh from the CFD surface (shape-preserving refinement), load mapping, CalculiX deck and shell-expansion check, results and failure criteria, material library |
+| `structures` | Structural check of aero elements: shell mesh remeshed from the CFD surface (feature-preserving, curvature-adaptive, ADR-0012), load mapping, CalculiX deck and shell-expansion plan (folding elements isolated), results and failure criteria, material library |
 | `validation` | Benchmarks, grid convergence index |
 | `services` | Use cases called by the API (geometry, mesh, runs, viz, compare, studies, shape zones, aero element setup, structures, demos, reports) |
 | `api` | FastAPI app, routes, WebSocket event stream, server entry point |
@@ -95,8 +95,10 @@ Every user action follows the same path (BUILD_SPEC "pipeline"):
   print to PDF). Context isolation and the sandbox are on; Node is not available to pages.
 * **Renderer** (`desktop/src`): React 19 + Mantine 9; zustand store; a typed API client
   with structured errors (`Diagnostic`); a WebSocket event stream for job progress and log
-  tails; a three.js viewer for geometry, overlays (tunnel, refinement boxes, wheels) and
-  ParaView extracts.
+  tails; a three.js viewer for geometry, overlays (tunnel, refinement boxes, modelled
+  refinement volumes, wheels) and ParaView extracts; a box editor on top of it (click a
+  box, drag the handle on a face) for refinement boxes, shape zones and structural supports,
+  and number fields whose labels can be dragged (ADR-0014).
 
 ## Why ParaView runs out of process
 

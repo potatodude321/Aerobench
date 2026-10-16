@@ -1,6 +1,6 @@
 # ADR-0013 — Shape zones: local morphing for optimisation
 
-Status: accepted (0.2.0)
+Status: accepted (0.2.0); item 6 added in 0.2.1
 
 ## Context
 
@@ -38,6 +38,20 @@ which parts moved, by how much, and whether the change is buildable.
    the goal honest (lift for a drag search, drag and balance for a downforce search) and a
    Bayesian budget of max(5, 2d + 1) + max(6, 2d) + 1 designs (at most 30). Aero elements vary
    their angle and height over the ground instead.
+
+6. **Zones act on the parts as imported (0.2.1).** The deformation is applied in the CFD
+   frame *before* the pose (ride height, rake; an element's angle and height). The zone
+   editor and the parameter editor therefore show the parts unposed, with the boxes where they
+   act; showing them posed (0.2.0) put the boxes beside an angled element, and trial changes
+   of boxes placed over what was shown moved nothing ("0 mm"). Each zone reports the share of
+   the surface its box covers (zero: "misses the part"); a trial change reports the largest
+   movement and says when nothing moves or when the movement is mostly tangential. Aero
+   elements get their own presets (leading edge, trailing edge, mid-chord camber, chord
+   length, tips); their boxes reach past the element above, below and beyond its edges by
+   more than the fade-out, so upper and lower surfaces move together and only the chordwise
+   ends fade. Sliver triangles of the tessellation that turn over under the change are a
+   warning, not a fold. Zones whose boxes overlap (on the same parts) are flagged: their
+   movements add up there.
 
 ## Consequences
 

@@ -20,7 +20,7 @@ configuration through **stage hashes**.
 | `reference` | `ReferenceValues` | Area (computed frontal or manual), length, density, velocity, moment centre, axes; locked once results exist |
 | `operating` | `OperatingCondition` | Speed U∞, yaw β, ground (moving/stationary), ground mode under yaw, wheel rotation, reference pressure |
 | `tunnel` | `TunnelConfig` | Domain extents in vehicle lengths (preset or custom), symmetry, contact patch, far-field BCs, design yaw range |
-| `mesh` | `MeshConfig` | Preset or custom: background cell, surface refinement per role/component, regions, layers, quality controls |
+| `mesh` | `MeshConfig` | Preset or custom: background cell, surface refinement per role/component, regions (box, rotated box, cylinder, sphere, or a modelled closed `surface` stored in the project in the parts' source frame), layers, quality controls |
 | `physics` | `PhysicsConfig` | Turbulence model, fluid (ρ, ν, temperature), inlet turbulence, wall treatment |
 | `numerics` | `NumericsConfig` | Versioned preset, iterations, first-order start, averaging window, write interval, overrides |
 | `observables` | `ObservablesConfig` | Component forces, y+, wall shear, Cp, vorticity, Q, continuity, probes |
@@ -36,6 +36,14 @@ SI throughout. CFD frame (ADR-0007): **+x downstream** (nose towards −x), **+z
 +z; with `auto_place`, `t` puts the nose at x = 0, the lowest point at z = 0 and the
 centreline at y = 0. Pose (ride height, rake) is applied after placement to body-attached
 components only — wheels stay on the ground.
+
+Bodies added later from the same model (ADR-0014) are read with the same `s` and `R`; the
+translation `t` is frozen at its value (`auto_place` off) so nothing already placed moves.
+Added parts join the geometry revision (a new revision, kind `added`); modelled refinement
+volumes are stored in the source frame and placed and posed like the body when a mesh is
+made. Changing units or axes re-places everything (`auto_place` on again). Shape zones and
+geometry parameters act on the placed parts *before* the pose; their editors show the parts
+that way.
 
 ## Components and wheels
 

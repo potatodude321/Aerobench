@@ -19,3 +19,6 @@ dist-electron/
 /desktop/build-resources/.icon-ico/
 /packaging/cache/
 /desktop/build-resources/components.nsh
+
+# test fixtures recorded from real OpenFOAM runs
+!/engine/tests/fixtures/**/*.log

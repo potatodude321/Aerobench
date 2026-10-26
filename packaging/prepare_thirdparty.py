@@ -213,6 +213,8 @@ def stage_paraview(zip_path: Path, dest_root: Path, tools: Path) -> dict:
 SOURCE_OFFER = """AeroBench {app_version} — source code of the GPL software it ships
 =====================================================================
 
+AeroBench itself is open-source software. Its source code: {source_url}
+
 The AeroBench installer contains OpenFOAM {of} for Windows, built by OpenCFD Ltd and
 redistributed unmodified. OpenFOAM is free software under the GNU General Public License
 version 3 (see resources\\licenses\\OpenFOAM\\GPL-3.0.txt in the installation). AeroBench runs
@@ -230,9 +232,9 @@ in the same folder are: GCC runtime (libgcc_s_seh-1, libstdc++-6: GPL-3.0 with t
 Library Exception), winpthreads (MIT/BSD), GMP 6.1.1, MPFR 3.1.4, MPC 1.0.2 (LGPL-3.0),
 FFTW 3.3.10 (GPL-2.0-or-later). Their upstream sources are at https://gmplib.org,
 https://www.mpfr.org, https://www.multiprecision.org, https://www.fftw.org and
-https://gcc.gnu.org; on written request we provide these sources on a physical medium
-for no more than the cost of distribution, for three years after the last distribution
-of this version.
+https://gcc.gnu.org. On written request (open an issue at {source_url}/issues)
+we provide these sources as a download, or on a physical medium for no more than the cost
+of distribution, for three years after the last distribution of this version.
 
 ParaView {pv} (BSD-3-Clause) is redistributed unmodified apart from removing the NVIDIA
 IndeX plugin and the uv tool; the licences of ParaView and of the libraries it bundles,
@@ -253,10 +255,19 @@ def stage_sources(cache: Path, out: Path, app_version: str) -> dict:
         if not dst.exists() or dst.stat().st_size != src.stat().st_size:
             shutil.copy2(src, dst)
         res[key] = {"file": src.name, "sha256": DOWNLOADS[key]["sha256"]}
-    text = SOURCE_OFFER.format(app_version=app_version, of=OPENFOAM_VERSION, pv=PARAVIEW_VERSION, mpi=MSMPI_VERSION,
-                               of_sha=DOWNLOADS["openfoam_source"]["sha256"], tp_sha=DOWNLOADS["thirdparty_source"]["sha256"])
+    text = source_offer(app_version)
     (out / "SOURCE-OFFER.txt").write_text(text, encoding="utf-8")
     return res, text
+
+
+def source_offer(app_version: str) -> str:
+    """The text of SOURCE-OFFER.txt for this version (rewritten by every build)."""
+    sys.path.insert(0, str(ROOT / "engine" / "src"))
+    from aerobench.version import SOURCE_URL  # noqa: E402
+
+    return SOURCE_OFFER.format(app_version=app_version, source_url=SOURCE_URL, of=OPENFOAM_VERSION, pv=PARAVIEW_VERSION,
+                               mpi=MSMPI_VERSION, of_sha=DOWNLOADS["openfoam_source"]["sha256"],
+                               tp_sha=DOWNLOADS["thirdparty_source"]["sha256"])
 
 
 def main() -> int:

@@ -20,7 +20,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -51,11 +50,19 @@ def build(args: argparse.Namespace) -> int:
     b = Path(args.build).resolve()
     manifest = b / "bundle" / "bundle.json"
     bundle_info = json.loads(manifest.read_text(encoding="utf-8"))
-    # the third-party bundle is prepared once; the manifest still names the version shipping it
-    version = re.search(r'APP_VERSION\s*=\s*"([^"]+)"', (ROOT / "engine" / "src" / "aerobench" / "version.py").read_text(encoding="utf-8"))
-    if version and bundle_info.get("app_version") != version.group(1):
-        bundle_info["app_version"] = version.group(1)
+    # the third-party bundle is prepared once; the manifest and the source offer still name the
+    # version that ships them
+    sys.path.insert(0, str(ROOT / "engine" / "src"))
+    from aerobench.version import APP_VERSION  # noqa: E402
+    from prepare_thirdparty import source_offer  # noqa: E402
+
+    if bundle_info.get("app_version") != APP_VERSION:
+        bundle_info["app_version"] = APP_VERSION
         manifest.write_text(json.dumps(bundle_info, indent=2), encoding="utf-8")
+    offer = source_offer(APP_VERSION)
+    for path in (b / "bundle" / "licenses" / "SOURCE-OFFER.txt", b / "sources" / "SOURCE-OFFER.txt"):
+        if path.parent.is_dir():
+            path.write_text(offer, encoding="utf-8")
     comps = bundle_info["components"]
     links = json.loads((b / "bundle" / "tools" / "paraview-links.json").read_text(encoding="utf-8"))
     pv_dir = Path(comps["paraview"]["path"]).name

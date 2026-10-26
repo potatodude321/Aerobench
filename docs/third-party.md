@@ -1,12 +1,11 @@
 # Third-party components and data
 
-AeroBench is proprietary. It **does not link to** OpenFOAM, ParaView, MPI, CalculiX or Gmsh:
+AeroBench's own code is licensed under the GNU General Public License v3.0 or later ([LICENSE](../LICENSE)). It **does not link to** OpenFOAM, ParaView, MPI, CalculiX or Gmsh:
 they run as separate programs that exchange files and pipes with AeroBench (aggregation, not a
 combined work). The Windows installer **redistributes** OpenFOAM, ParaView, CalculiX and the
 Microsoft MPI installer unmodified (ParaView minus two optional parts), which carries
 obligations listed below. Libraries that are linked into AeroBench are permissively licensed (or LGPL,
-dynamically loaded). This page is an engineering inventory, not legal advice — have the
-distribution reviewed before release.
+dynamically loaded). This page is an engineering inventory, not legal advice.
 
 ## External programs (run as processes)
 
@@ -26,7 +25,7 @@ distribution reviewed before release.
   Source (`OpenFOAM-v2606.tgz`, `ThirdParty-v2606.tar.gz`, as published by OpenCFD, SHA-256
   pinned in `packaging/prepare_thirdparty.py`) is produced by the build in
   `packaging\build\sources` and **must be published next to every installer download**
-  (GPL-3.0 §6). The MinGW runtime libraries in the same folder (GCC runtime with the GCC
+  (GPL-3.0 §6); it is attached to every GitHub release together with the installer. The MinGW runtime libraries in the same folder (GCC runtime with the GCC
   Runtime Library Exception; GMP, MPFR, MPC under LGPL-3.0; FFTW under GPL-2.0-or-later) are
   covered by the written offer in `SOURCE-OFFER.txt` with their upstream locations.
 * **ParaView** — redistributed with its `share\licenses` folder intact; Qt 6 is LGPL-3.0
@@ -40,7 +39,7 @@ distribution reviewed before release.
   `resources\licenses\calculix\<package>`. The build writes the Corresponding Source to
   `packaging\build\sources\calculix` (upstream `ccx_2.23.src.tar.bz2`, SHA-256 pinned, and
   `SOURCE.txt` naming the conda-forge recipe used for the Windows build); **publish it next to
-  every installer download** (GPL-2.0 §3). Runtime DLLs shipped with it: ARPACK-NG
+  every installer download** (GPL-2.0 §3) — it is attached to every GitHub release. Runtime DLLs shipped with it: ARPACK-NG
   (BSD-3-Clause), OpenBLAS with its BLAS/LAPACK interfaces (BSD-3-Clause), the GCC runtime
   (libgcc_s, libgfortran, libgomp: GPL-3.0 with the GCC Runtime Library Exception;
   libquadmath: LGPL-2.1-or-later, dynamically loaded) and winpthreads (MIT and BSD-style).

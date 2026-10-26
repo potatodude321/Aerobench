@@ -104,6 +104,25 @@ electron-builder, which signs `AeroBench.exe`, the uninstaller and the installer
 third-party executables are excluded by a signing hook (`desktop/build-resources/sign.js`)
 so they keep their vendors' own signatures (Microsoft for MS-MPI, the PSF for Python).
 
+Open-source projects can have their releases signed free of charge by the SignPath
+Foundation, which requires the installer to be built by CI from the public repository and each
+signing to be approved by a maintainer (see the roadmap).
+
+### Publishing a release
+
+1. Set the version in `engine/src/aerobench/version.py`, `engine/pyproject.toml` and
+   `desktop/package.json`; describe the changes in the release notes.
+2. Build the installer (above) and run the unit and integration tests; install it over the
+   previous version once to see that unchanged components are kept.
+3. Tag the commit (`git tag v0.2.2 && git push origin v0.2.2`) and create a GitHub release
+   from the tag. Attach:
+   * `desktop/release/AeroBench-Setup-<version>.exe`, with its SHA-256 in the notes;
+   * the Corresponding Source of the GPL programs from `packaging/build/sources`:
+     `OpenFOAM-v2606.tgz`, `ThirdParty-v2606.tar.gz`, `SOURCE-OFFER.txt` and, from
+     `calculix/`, `ccx_2.23.src.tar.bz2` and `SOURCE.txt` (GPL-3.0 §6, GPL-2.0 §3 — every
+     installer download must have them next to it).
+   Each file must be smaller than 2 GiB.
+
 ## Runtime layout (installed)
 
 ```

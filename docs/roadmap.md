@@ -1,6 +1,6 @@
 # Roadmap
 
-Status as of version 0.2.1 (2026-10). Everything listed under "Delivered" is implemented,
+Status as of version 0.2.2 (2026-10). Everything listed under "Delivered" is implemented,
 tested and documented; later items are ordered by engineering value.
 
 ## Delivered (0.1.0)
@@ -48,6 +48,13 @@ tested and documented; later items are ordered by engineering value.
   edited by dragging the arrows on their faces in the 3D view or field labels, mirrored
   copies, overlap notes and an overlap-aware cell estimate (ADR-0014).
 
+## Delivered (0.2.2)
+
+* First open-source release under the GNU GPL v3.0 or later, published on GitHub with the
+  installer and the source code of the bundled GPL programs; About panel with the licence,
+  trade mark notices and a link to the source; contributor guide, code of conduct, security
+  policy and automatic checks on every change.
+
 ## Next (0.3)
 
 1. **Validation records on Windows.** Run `aerobench benchmark` (Ahmed 25°/35°, medium and
@@ -73,10 +80,11 @@ tested and documented; later items are ordered by engineering value.
   validated (ADR-0009).
 * Surrogate models (GP/neural) trained on study databases with uncertainty, for interactive
   design-space exploration.
-* Multi-user project server, licence and update infrastructure for commercial editions
-  (deliberately absent from this master build).
-* Native code signing and auto-update channel.
-
+* Code-signed installers (for example through the SignPath Foundation, which signs
+  open-source projects built from their public repository) and an update notice in the
+  application.
+* Building the Windows installer in GitHub Actions, so every release is built from the
+  tagged source.
 * Structural check: buckling, modal analysis (flutter margins) and progressive ply damage;
   solid inserts and bonded joints; loads from several runs combined into load cases.
 

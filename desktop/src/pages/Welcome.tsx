@@ -8,6 +8,7 @@ import { EnvironmentCard } from "../components/EnvironmentCard";
 import { notifyError } from "../components/notify";
 import { Hint, SectionTitle } from "../components/ui";
 import { useApp } from "../state/store";
+import { REPO_URL } from "../about";
 
 /** The launch window's motif, still: a car in profile with the air passing over it. */
 function FlowMark() {
@@ -101,6 +102,14 @@ export function Welcome() {
       <div style={{ maxWidth: 1080, margin: "0 auto", padding: "56px 40px 40px" }}>
         <div style={{ fontFamily: "var(--ab-font-num)", fontWeight: 600, fontSize: 40, lineHeight: 1, letterSpacing: 0.2 }}>AeroBench</div>
         <div style={{ color: "var(--ab-text-2)", fontSize: 15, marginTop: 8 }}>Vehicle external aerodynamics, from CAD to drag and downforce.</div>
+        <div style={{ borderLeft: "2px solid var(--ab-warn)", paddingLeft: 12, marginTop: 18, maxWidth: 720, fontSize: 13, lineHeight: 1.5, color: "var(--ab-text-2)" }}>
+          <span style={{ color: "var(--ab-text)" }}>Early, experimental software.</span> Many features are only lightly tested: runs may fail
+          and results may be wrong, so check numbers that matter another way. Please{" "}
+          <a href={`${REPO_URL}/issues`} target="_blank" rel="noreferrer" style={{ color: "var(--ab-accent)" }}>
+            report problems and ideas
+          </a>
+          .
+        </div>
         <div style={{ marginTop: 22 }}>
           <FlowMark />
         </div>

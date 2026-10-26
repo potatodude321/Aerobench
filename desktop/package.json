@@ -1,11 +1,16 @@
 {
   "name": "aerobench-desktop",
   "private": true,
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "AeroBench — vehicle external aerodynamics workbench",
+  "homepage": "https://github.com/potatodude321/Aerobench",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/potatodude321/Aerobench.git"
+  },
   "main": "dist-electron/main.js",
-  "author": "AeroBench developers",
-  "license": "UNLICENSED",
+  "author": "Abdul Mahmood",
+  "license": "GPL-3.0-or-later",
   "scripts": {
     "dev": "vite",
     "build:renderer": "vite build",
@@ -73,6 +78,10 @@
           "**/*",
           "!**/__pycache__/**"
         ]
+      },
+      {
+        "from": "../LICENSE",
+        "to": "LICENSE.txt"
       },
       {
         "from": "../packaging/build/THIRD-PARTY-LICENSES.txt",

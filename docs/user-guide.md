@@ -1,9 +1,16 @@
 # User guide
 
+> [!WARNING]
+> AeroBench is early, experimental software. Many features are only lightly tested and may
+> fail or give wrong results; check numbers that matter another way. Please report problems
+> and ideas on the [Issues](https://github.com/potatodude321/Aerobench/issues) page.
+
 ## 1. Install (Windows 10/11, 64-bit)
 
-Run `AeroBench-Setup-<version>.exe` and accept the administrator prompt. That is all: the
-setup installs everything the application needs.
+Download `AeroBench-Setup-<version>.exe` from the
+[releases page](https://github.com/potatodude321/Aerobench/releases), run it and accept the
+administrator prompt. That is all: the setup installs everything the application needs. The
+installer is not code-signed yet, so Windows SmartScreen asks first: *More info → Run anyway*.
 
 | Included | What it is for |
 |---|---|
@@ -23,6 +30,9 @@ installation, replaces the application, and keeps each large component (Python r
 OpenFOAM, ParaView, CalculiX) that is unchanged in the new version, so an update takes a few
 minutes instead of a full installation. Projects are never touched. `resources\setup.log`
 in the installation folder records what was kept and what was installed.
+
+*Settings → About* shows the version, the licence (GNU GPL v3.0 or later) and where the
+source code is; the licence texts of everything included are in the installation folder.
 
 Advanced alternatives (Settings → Solver): your own OpenFOAM v2606 installation, or a Linux
 workstation with `openfoam2606` reached over SSH. (WSL is no longer offered: the included

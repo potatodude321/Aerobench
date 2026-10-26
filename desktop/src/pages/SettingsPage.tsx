@@ -1,6 +1,7 @@
 import { Button, Container, Group, NumberInput, Paper, Stack, Switch, Text, TextInput, Title } from "@mantine/core";
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
+import { AboutPanel } from "../components/AboutPanel";
 import { EnvironmentCard } from "../components/EnvironmentCard";
 import { SectionTitle } from "../components/ui";
 import { notifyError, notifyOk } from "../components/notify";
@@ -63,6 +64,7 @@ export function SettingsPage() {
         <Group justify="flex-end">
           <Button onClick={save}>Save settings</Button>
         </Group>
+        <AboutPanel />
       </Stack>
     </Container>
   );

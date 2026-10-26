@@ -1,0 +1,44 @@
+name: Bug report
+description: Something does not work as described, or a result looks wrong.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The pages and settings you used, in order. A demo project (Ahmed body or front wing) that shows the problem is ideal.
+      placeholder: |
+        1. Start screen -> Or try a demo -> Front wing
+        2. Mesh -> Generate
+        3. ...
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: For a failed job, open the log (Logs page, or the log link next to the run) and paste the last part here.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: AeroBench version
+      description: Shown under Settings -> About.
+      placeholder: "0.2.2"
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Windows version, processor cores and memory
+      placeholder: Windows 11 23H2, 16 cores, 64 GB
+  - type: textarea
+    id: files
+    attributes:
+      label: Geometry or screenshots
+      description: Attach a screenshot, or the geometry (or a simplified version) if you can share it. Do not attach anything you are not allowed to publish.

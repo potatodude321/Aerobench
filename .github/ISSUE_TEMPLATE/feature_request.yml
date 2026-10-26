@@ -1,0 +1,21 @@
+name: Feature request
+description: Suggest something AeroBench should do.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to do?
+      description: Describe the task or question you have, not only the feature you would like.
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: How do you do it today?
+      description: Workarounds, other tools, or "I can't".
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help
+      description: How you imagine it working in AeroBench, if you have an idea.

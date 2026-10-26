@@ -1,0 +1,74 @@
+# Checks every push and pull request: engine unit tests (with CalculiX and OpenCASCADE, without
+# OpenFOAM), lint, and the desktop type check and tests. The OpenFOAM/ParaView integration tests
+# and the Windows installer build need large third-party downloads and run locally
+# (docs/developer-setup.md, docs/packaging.md).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  engine:
+    name: Engine (Python ${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12"]
+    defaults:
+      run:
+        working-directory: engine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: engine/pyproject.toml
+      - name: CalculiX (structural check tests)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends calculix-ccx
+      - name: Install
+        run: python -m pip install -e ".[dev,cad]"
+      - name: Lint
+        run: ruff check src tests
+      - name: Unit tests
+        env:
+          AEROBENCH_CONFIG_DIR: ${{ runner.temp }}/aerobench-config
+        run: python -m pytest tests/unit -q
+
+  desktop:
+    name: Desktop
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Install
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+        run: npm ci
+      - name: Type check
+        run: npm run typecheck && npx tsc -p electron/tsconfig.json --noEmit
+      - name: Tests
+        run: npm test
+      - name: Build the interface
+        run: npx vite build
